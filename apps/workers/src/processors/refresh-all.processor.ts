@@ -88,5 +88,15 @@ export async function ensureRefreshSchedule(): Promise<void> {
   );
   await boardQueue.close();
 
-  console.log('[scheduler] due-companies tick: 15m; board crawls: 24h');
+  const discoveryQueue = new Queue(QueueNames.DISCOVERY_FANOUT, {
+    connection: createRedisConnection(),
+  });
+  await discoveryQueue.upsertJobScheduler(
+    'discovery-fanout-10m',
+    { every: 10 * 60 * 1000 },
+    { name: 'scheduled' },
+  );
+  await discoveryQueue.close();
+
+  console.log('[scheduler] due-companies: 15m; boards: 24h; discovery-fanout: 10m');
 }

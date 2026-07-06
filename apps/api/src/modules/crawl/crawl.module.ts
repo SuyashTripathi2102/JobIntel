@@ -2,7 +2,11 @@ import { Module } from '@nestjs/common';
 import { BullModule } from '@nestjs/bullmq';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { CrawlController } from './crawl.controller';
-import { REFRESH_ALL_QUEUE } from './crawl.constants';
+import {
+  DISCOVERY_FANOUT_QUEUE,
+  REFRESH_ALL_QUEUE,
+  SEED_IMPORT_QUEUE,
+} from './crawl.constants';
 
 @Module({
   imports: [
@@ -14,6 +18,8 @@ import { REFRESH_ALL_QUEUE } from './crawl.constants';
       }),
     }),
     BullModule.registerQueue({ name: REFRESH_ALL_QUEUE }),
+    BullModule.registerQueue({ name: SEED_IMPORT_QUEUE }),
+    BullModule.registerQueue({ name: DISCOVERY_FANOUT_QUEUE }),
   ],
   controllers: [CrawlController],
 })

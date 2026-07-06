@@ -1,11 +1,12 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
-import { CrawlStatus, CrawlTier, JobStatus, Prisma } from '@prisma/client';
+import { CrawlStatus, CrawlTier, DiscoveryStage, JobStatus, Prisma } from '@prisma/client';
 import { randomUUID } from 'crypto';
 import type { BoardJob, NormalizedJob } from '@careeros/shared';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CompaniesService } from '../companies/companies.service';
+import { computeConfidence } from '../discovery/discovery.service';
 import { EMBED_JOBS_QUEUE } from './internal.constants';
 
 export interface SyncResult {
@@ -77,6 +78,7 @@ export class IngestService {
       });
 
       await this.bumpNextCrawl(companyId, /* failed */ false);
+      await this.updateConfidenceAfterCrawl(companyId, jobs.length > 0);
       await this.enqueueEmbeddings(newJobIds);
 
       return { crawlRunId: run.id, found: jobs.length, created, updated, removed };
@@ -224,6 +226,45 @@ export class IngestService {
     }
 
     return { created, updated, newJobIds };
+  }
+
+  /**
+   * Post-crawl confidence maintenance: jobsExtracted once we've ever pulled
+   * jobs, monitoringHealthy from the recent success rate. Weights live in
+   * discovery.service.ts (computeConfidence) — duplicated intentionally NOT:
+   * we import it.
+   */
+  private async updateConfidenceAfterCrawl(companyId: string, gotJobs: boolean): Promise<void> {
+    const company = await this.prisma.company.findUnique({
+      where: { id: companyId },
+      select: { confidenceSignals: true },
+    });
+    const recent = await this.prisma.crawlRun.findMany({
+      where: { companyId },
+      orderBy: { startedAt: 'desc' },
+      take: 10,
+      select: { status: true },
+    });
+    const successes = recent.filter((r) => r.status === CrawlStatus.SUCCEEDED).length;
+    const healthy = recent.length > 0 && successes / recent.length >= 0.7;
+
+    const prev = (company?.confidenceSignals ?? {}) as Record<string, unknown>;
+    const signals = {
+      ...prev,
+      websiteVerified: prev.websiteVerified === true,
+      careerPageFound: true, // it's syncing a board — the page evidently exists
+      atsDetected: true,
+      jobsExtracted: prev.jobsExtracted === true || gotJobs,
+      monitoringHealthy: healthy,
+    };
+    await this.prisma.company.update({
+      where: { id: companyId },
+      data: {
+        discoveryStage: DiscoveryStage.MONITORED,
+        confidence: computeConfidence(signals),
+        confidenceSignals: signals as object,
+      },
+    });
   }
 
   private async bumpNextCrawl(companyId: string, failed: boolean): Promise<void> {

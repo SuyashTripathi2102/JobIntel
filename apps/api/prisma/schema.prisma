@@ -76,6 +76,16 @@ enum CrawlTier {
   COLD
 }
 
+// Discovery lifecycle: Discover → Verify Website → Find Career Page → Detect ATS
+// → MONITORED (jobs flowing). UNRESOLVABLE = probing exhausted, retried monthly.
+enum DiscoveryStage {
+  DISCOVERED
+  WEBSITE_VERIFIED
+  CAREER_PAGE_FOUND
+  MONITORED
+  UNRESOLVABLE
+}
+
 enum CrawlStatus {
   RUNNING
   SUCCEEDED
@@ -252,8 +262,19 @@ model Company {
   atsIdentifier String? // e.g. Greenhouse board token, Lever site slug
   crawlTier     CrawlTier @default(WARM)
   nextCrawlAt   DateTime  @default(now()) // due when <= now; bumped per-tier after each sync
+
+  // ── Discovery pipeline (Phase B) ──
+  discoveryStage    DiscoveryStage @default(DISCOVERED)
+  discoverySource   String? // "seed" | "remoteok" | "yc" | "manual" | ...
+  // Confidence 0-100 from confidenceSignals — how sure we are this is a real,
+  // monitorable employer. Recomputed on every discovery/crawl event.
+  confidence        Float          @default(0)
+  confidenceSignals Json? // { websiteVerified, careerPageFound, atsDetected, jobsExtracted, monitoringHealthy }
+  lastProbedAt      DateTime? // discovery prober bookkeeping — due again after cooldown
+
   country       String?
   city          String? // for city-based discovery (Indore/Pune/Bangalore...)
+  teamSize      Int? // from directory metadata (e.g. YC dataset)
   industry      String?
   size          CompanySize?
   logoUrl       String?
@@ -270,6 +291,7 @@ model Company {
   @@unique([atsProvider, atsIdentifier])
   @@index([name])
   @@index([nextCrawlAt]) // the "due now" scheduler query
+  @@index([discoveryStage, lastProbedAt]) // the discovery prober's due query
   @@map("companies")
 }
 
@@ -293,8 +315,9 @@ model Job {
   status      JobStatus @default(ACTIVE)
   raw         Json? // original source payload, for reprocessing without recrawling
   // GENERATED ALWAYS AS to_tsvector(title+description) STORED — created in a
-  // hand-edited migration; Prisma only knows the type, never writes to it.
-  search      Unsupported("tsvector")?
+  // hand-edited migration; @default(dbgenerated()) tells Prisma a db-side
+  // expression owns this column so its diff engine leaves it alone.
+  search      Unsupported("tsvector")? @default(dbgenerated())
 
   company      Company       @relation(fields: [companyId], references: [id], onDelete: Cascade)
   skills       JobSkill[]
@@ -304,6 +327,7 @@ model Job {
 
   // Dedupe guarantee: a recrawl updates the existing row instead of inserting.
   @@unique([companyId, externalId])
+  @@index([search], type: Gin)
   @@index([status, firstSeenAt])
   @@index([title])
   @@index([country, workMode])

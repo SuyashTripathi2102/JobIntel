@@ -10,6 +10,7 @@ import { AuthModule } from './modules/auth/auth.module';
 import { MatchingModule } from './modules/matching/matching.module';
 import { CompaniesModule } from './modules/companies/companies.module';
 import { CrawlModule } from './modules/crawl/crawl.module';
+import { DiscoveryModule } from './modules/discovery/discovery.module';
 import { InternalModule } from './modules/internal/internal.module';
 import { JobsModule } from './modules/jobs/jobs.module';
 import { JwtAuthGuard } from './modules/auth/guards/jwt-auth.guard';
@@ -33,6 +34,7 @@ import { UsersModule } from './modules/users/users.module';
     ResumesModule,
     AiModule,
     CompaniesModule,
+    DiscoveryModule,
     JobsModule,
     InternalModule,
     CrawlModule,

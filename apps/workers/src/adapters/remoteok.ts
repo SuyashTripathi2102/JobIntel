@@ -1,5 +1,5 @@
 import type { BoardJob } from '@careeros/shared';
-import { htmlToText } from './html';
+import { decodeEntities, htmlToText } from './html';
 import { capDescription, fetchJson } from './types';
 
 interface RemoteOkItem {
@@ -30,12 +30,14 @@ export async function fetchRemoteOkJobs(): Promise<BoardJob[]> {
     .filter((i) => i.id && i.position && i.company)
     .map((i) => ({
       company: {
-        name: i.company!,
+        // RemoteOK names arrive HTML-encoded ("RG&amp;T Solutions") — decode
+        // or the discovery prober guesses tokens from garbage.
+        name: decodeEntities(i.company!),
         atsHintUrl: safeUrl(i.apply_url) ?? null,
       },
       job: {
         externalId: `remoteok-${i.id}`,
-        title: i.position!,
+        title: decodeEntities(i.position!),
         description: capDescription(htmlToText(i.description ?? '')),
         url: safeUrl(i.url) ?? `https://remoteok.com/remote-jobs/${i.slug ?? i.id}`,
         location: i.location || 'Remote',

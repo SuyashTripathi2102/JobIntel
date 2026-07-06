@@ -2,6 +2,11 @@ import 'dotenv/config';
 import { ApiClient } from './api-client';
 import { startCrawlCompanyWorker } from './processors/crawl-company.processor';
 import { startCrawlBoardWorker } from './processors/crawl-board.processor';
+import {
+  startDiscoverCompanyWorker,
+  startDiscoveryFanoutWorker,
+} from './processors/discover-company.processor';
+import { startSeedImportWorker } from './processors/seed-import.processor';
 import { ensureRefreshSchedule, startRefreshAllWorker } from './processors/refresh-all.processor';
 
 async function main() {
@@ -11,6 +16,9 @@ async function main() {
     startRefreshAllWorker(api),
     startCrawlCompanyWorker(api),
     startCrawlBoardWorker(api),
+    startDiscoveryFanoutWorker(api),
+    startDiscoverCompanyWorker(api),
+    startSeedImportWorker(api),
   ];
   await ensureRefreshSchedule();
 

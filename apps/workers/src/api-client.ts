@@ -1,4 +1,9 @@
-import type { BoardJob, NormalizedJob } from '@careeros/shared';
+import type {
+  BoardJob,
+  CompanyCandidate,
+  DiscoveryResult,
+  NormalizedJob,
+} from '@careeros/shared';
 
 /**
  * The workers' only write path — everything goes through the API's internal
@@ -27,6 +32,23 @@ export class ApiClient {
     return this.request('POST', '/internal/boards/ingest', { source, entries });
   }
 
+  // ── Company Discovery Engine ──
+
+  getDiscoveryDue(limit: number): Promise<DiscoveryDueCompany[]> {
+    return this.request('GET', `/internal/discovery/due?limit=${limit}`);
+  }
+
+  applyDiscoveryResult(companyId: string, result: DiscoveryResult): Promise<{ stage: string }> {
+    return this.request('POST', `/internal/discovery/${companyId}/result`, result);
+  }
+
+  bulkDiscover(
+    source: string,
+    candidates: CompanyCandidate[],
+  ): Promise<{ created: number; merged: number }> {
+    return this.request('POST', '/internal/discovery/bulk', { source, candidates });
+  }
+
   private async request<T>(method: string, path: string, body?: unknown): Promise<T> {
     const res = await fetch(`${this.baseUrl}${path}`, {
       method,
@@ -42,6 +64,14 @@ export class ApiClient {
     }
     return (await res.json()) as T;
   }
+}
+
+export interface DiscoveryDueCompany {
+  id: string;
+  name: string;
+  website: string | null;
+  careerPageUrl: string | null;
+  discoveryStage: string;
 }
 
 export interface CompanyDue {
