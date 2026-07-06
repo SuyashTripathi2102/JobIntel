@@ -371,8 +371,14 @@ model JobMatch {
   experienceScore Float
   missingSkills   String[]  @default([])
   reasoning       String? // LLM explanation shown in the dashboard
-  notifiedAt      DateTime? // set when the user was told — "notify once" guard
-  createdAt       DateTime  @default(now())
+
+  // ── Opportunity Score (Phase C) ──
+  opportunityScore Float? // 0-100 combined from scoreBreakdown modules
+  scoreBreakdown   Json? // [{module, score, weight, reason}] — explainability
+  contentHash      String? // job title+salary hash at scoring time — re-notify trigger
+
+  notifiedAt DateTime? // notification memory: set when the user was told
+  createdAt  DateTime  @default(now())
 
   user          User          @relation(fields: [userId], references: [id], onDelete: Cascade)
   job           Job           @relation(fields: [jobId], references: [id], onDelete: Cascade)
@@ -390,6 +396,10 @@ model Application {
   status    ApplicationStatus @default(SAVED)
   notes     String?
   appliedAt DateTime?
+  // Outcome-analytics foundations ("which resume version gets interviews",
+  // "which source converts") — recorded from the first application onward.
+  resumeVersionId String?
+  source          String? // "careeros-match" | "referral" | "manual" | board name
   createdAt DateTime          @default(now())
   updatedAt DateTime          @updatedAt
 

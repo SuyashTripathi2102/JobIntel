@@ -49,4 +49,10 @@ export class MatchingController {
   ) {
     return this.matching.list(user.id, minScore);
   }
+
+  /** Recompute opportunity scores (no LLM) + run the notification gate. */
+  @Post('rescore')
+  rescore(@CurrentUser() user: AuthenticatedUser) {
+    return this.matching.rescoreExisting(user.id);
+  }
 }

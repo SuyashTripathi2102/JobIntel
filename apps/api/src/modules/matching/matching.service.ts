@@ -3,11 +3,14 @@ import { randomUUID } from 'crypto';
 import { PrismaService } from '../../prisma/prisma.service';
 import { LLM_PROVIDER } from '../ai/llm.provider';
 import type { LlmProvider } from '../ai/llm.provider';
+import { NotificationsService } from '../notifications/notifications.service';
+import { OpportunityService } from '../opportunity/opportunity.service';
 import type { ParsedResume } from '../resumes/resume-intelligence.service';
 
 const SIMILARITY_TOP_K = 40; // pgvector prefilter size
 const LLM_SCORE_TOP_N = 15; // how many get deep LLM scoring
 const SCORE_BATCH = 5; // jobs per LLM call (free-tier RPM friendly)
+const MIN_SIMILARITY = 0.45; // incremental path: below this, don't spend LLM calls
 
 interface JobScore {
   jobId: string;
@@ -25,6 +28,8 @@ export class MatchingService {
   constructor(
     private readonly prisma: PrismaService,
     @Inject(LLM_PROVIDER) private readonly llm: LlmProvider,
+    private readonly opportunity: OpportunityService,
+    private readonly notifications: NotificationsService,
   ) {}
 
   /**
@@ -50,13 +55,98 @@ export class MatchingService {
     this.logger.log(`Prefilter: ${candidates.length} candidates by cosine similarity`);
 
     const toScore = candidates.slice(0, LLM_SCORE_TOP_N);
+    const matchIds = await this.scoreAndUpsert(userId, resume, toScore);
+
+    // Opportunity scoring + notification (memory prevents bulk-run spam).
+    for (const id of matchIds) {
+      await this.opportunity.scoreMatch(id);
+      await this.notifications.maybeNotifyMatch(id);
+    }
+
+    return { matched: matchIds.length, scanned: candidates.length };
+  }
+
+  /**
+   * Incremental path (Phase C): freshly ingested+embedded jobs get matched
+   * against every user with a parsed primary resume, scored, and — if they
+   * clear the bar — pushed as a notification within the crawl tier's latency.
+   */
+  async matchNewJobs(jobIds: string[]): Promise<{ notified: number; matched: number }> {
+    const users = await this.prisma.user.findMany({
+      where: {
+        resumes: { some: { isPrimary: true, versions: { some: { embedding: { isNot: null } } } } },
+      },
+      select: { id: true },
+    });
+
     let matched = 0;
+    let notified = 0;
+    for (const user of users) {
+      let resume;
+      try {
+        resume = await this.getPrimaryResumeContext(user.id);
+      } catch {
+        continue; // resume not parsed yet
+      }
+
+      const candidates = await this.prisma.$queryRaw<
+        { id: string; title: string; description: string; similarity: number }[]
+      >`
+        SELECT j.id, j.title, j.description,
+               1 - (je.vector <=> re.vector) AS similarity
+        FROM job_embeddings je
+        JOIN jobs j ON j.id = je."jobId" AND j.status = 'ACTIVE'
+        CROSS JOIN (SELECT vector FROM resume_embeddings WHERE "resumeVersionId" = ${resume.resumeVersionId}) re
+        WHERE j.id = ANY(${jobIds})
+          AND 1 - (je.vector <=> re.vector) > ${MIN_SIMILARITY}
+        ORDER BY je.vector <=> re.vector
+        LIMIT 10
+      `;
+      if (candidates.length === 0) continue;
+
+      const matchIds = await this.scoreAndUpsert(user.id, resume, candidates);
+      matched += matchIds.length;
+      for (const id of matchIds) {
+        await this.opportunity.scoreMatch(id);
+        if (await this.notifications.maybeNotifyMatch(id)) notified++;
+      }
+    }
+    if (matched > 0) {
+      this.logger.log(`Incremental: ${jobIds.length} new jobs -> ${matched} matches, ${notified} notified`);
+    }
+    return { matched, notified };
+  }
+
+  /**
+   * Recompute opportunity scores for a user's existing matches (no LLM —
+   * freshness decays, preferences change, company intel improves) and run
+   * the notification gate over the results.
+   */
+  async rescoreExisting(userId: string): Promise<{ rescored: number; notified: number }> {
+    const matches = await this.prisma.jobMatch.findMany({
+      where: { userId, job: { status: 'ACTIVE' } },
+      select: { id: true },
+    });
+    let notified = 0;
+    for (const m of matches) {
+      await this.opportunity.scoreMatch(m.id);
+      if (await this.notifications.maybeNotifyMatch(m.id)) notified++;
+    }
+    return { rescored: matches.length, notified };
+  }
+
+  private async scoreAndUpsert(
+    userId: string,
+    resume: { resumeVersionId: string; parsed: ParsedResume },
+    toScore: { id: string; title: string; description: string }[],
+  ): Promise<string[]> {
+    const matchIds: string[] = [];
     for (let i = 0; i < toScore.length; i += SCORE_BATCH) {
       if (i > 0) await new Promise((r) => setTimeout(r, 8_000)); // free-tier RPM pacing
       const batch = toScore.slice(i, i + SCORE_BATCH);
       const scores = await this.scoreBatch(resume.parsed, batch);
       for (const s of scores) {
-        await this.prisma.jobMatch.upsert({
+        const row = await this.prisma.jobMatch.upsert({
           where: { userId_jobId: { userId, jobId: s.jobId } },
           create: {
             userId,
@@ -76,12 +166,12 @@ export class MatchingService {
             missingSkills: s.missingSkills,
             reasoning: s.reasoning,
           },
+          select: { id: true },
         });
-        matched++;
+        matchIds.push(row.id);
       }
     }
-
-    return { matched, scanned: candidates.length };
+    return matchIds;
   }
 
   list(userId: string, minScore = 0) {

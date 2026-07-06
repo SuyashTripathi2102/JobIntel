@@ -8,6 +8,8 @@ import { PrismaModule } from './prisma/prisma.module';
 import { AiModule } from './modules/ai/ai.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { MatchingModule } from './modules/matching/matching.module';
+import { NotificationsModule } from './modules/notifications/notifications.module';
+import { OpportunityModule } from './modules/opportunity/opportunity.module';
 import { CompaniesModule } from './modules/companies/companies.module';
 import { CrawlModule } from './modules/crawl/crawl.module';
 import { DiscoveryModule } from './modules/discovery/discovery.module';
@@ -41,7 +43,8 @@ import { UsersModule } from './modules/users/users.module';
     InternalModule,
     CrawlModule,
     MatchingModule,
-    // Phase 6+: NotificationsModule
+    NotificationsModule,
+    OpportunityModule,
   ],
   controllers: [AppController],
   providers: [
