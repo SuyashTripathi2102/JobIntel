@@ -29,7 +29,12 @@ export async function probeCompany(input: ProbeInput): Promise<DiscoveryResult> 
   let websiteVerified = false;
   let careerPageUrl: string | null = null;
   let ats: AtsDetection = { provider: 'UNKNOWN', identifier: null };
-  let metadata: { title?: string | null; description?: string | null } | null = null;
+  let metadata: {
+    title?: string | null;
+    description?: string | null;
+    githubOrg?: string | null;
+    blogUrl?: string | null;
+  } | null = null;
 
   // 0. If we already hold a career/board hint, resolve it first (follows
   //    redirects — this converts RemoteOK-style redirect links into real ATS).
@@ -51,7 +56,7 @@ export async function probeCompany(input: ProbeInput): Promise<DiscoveryResult> 
     if (page) {
       websiteVerified = true;
       website = page.finalUrl;
-      metadata = extractMetadata(page.html);
+      metadata = extractMetadata(page.html, page.finalUrl);
 
       if (!ats.identifier) {
         const links = extractCareerLinks(page.html, page.finalUrl);
@@ -178,7 +183,15 @@ function extractCareerLinks(html: string, baseUrl: string): string[] {
   return [...out];
 }
 
-function extractMetadata(html: string): { title?: string | null; description?: string | null } {
+function extractMetadata(
+  html: string,
+  baseUrl: string,
+): {
+  title?: string | null;
+  description?: string | null;
+  githubOrg?: string | null;
+  blogUrl?: string | null;
+} {
   const title = html.match(/<title[^>]*>([^<]{1,200})/i)?.[1]?.trim() ?? null;
   const description =
     html
@@ -188,10 +201,42 @@ function extractMetadata(html: string): { title?: string | null; description?: s
       .match(/<meta[^>]+content=["']([^"']{1,500})["'][^>]+name=["']description["']/i)?.[1]
       ?.trim() ??
     null;
-  return { title, description };
+
+  // Company Intelligence harvest: GitHub org + engineering blog, if linked.
+  const githubOrg =
+    html.match(/github\.com\/([a-zA-Z0-9][a-zA-Z0-9-]{1,38})(?:["'/?#]|$)/)?.[1] ?? null;
+  const blogMatch = html.match(
+    /href=["']([^"']*(?:engineering\.[^"']{2,80}|\/(?:blog|engineering)\/?))["']/i,
+  )?.[1];
+  let blogUrl: string | null = null;
+  if (blogMatch) {
+    try {
+      blogUrl = new URL(blogMatch, baseUrl).toString(); // resolves relative /blog
+    } catch {
+      blogUrl = null;
+    }
+  }
+
+  return {
+    title,
+    description,
+    githubOrg: githubOrg && !RESERVED_GH.has(githubOrg.toLowerCase()) ? githubOrg : null,
+    blogUrl,
+  };
 }
 
-/** Slug variants of a company name → probe each ATS's public API directly. */
+/** github.com/<these> are products/pages, not orgs. */
+const RESERVED_GH = new Set([
+  'features', 'pricing', 'about', 'contact', 'login', 'signup', 'sponsors',
+  'marketplace', 'topics', 'collections', 'events', 'apps', 'orgs', 'enterprise',
+]);
+
+/**
+ * Slug variants of a company name → probe each ATS's public API directly.
+ * Ordered by ATS market share among tech companies. Each probe's body is
+ * checked for a board-like shape — an ATS's generic 200 error page must not
+ * count as a hit.
+ */
 async function guessAtsToken(name: string, log: string[]): Promise<AtsDetection> {
   const base = name.toLowerCase().replace(/[^a-z0-9\s-]/g, '').trim();
   const slugs = [...new Set([base.replace(/\s+/g, ''), base.replace(/\s+/g, '-')])].filter(
@@ -199,21 +244,67 @@ async function guessAtsToken(name: string, log: string[]): Promise<AtsDetection>
   );
 
   for (const slug of slugs) {
-    const probes: { provider: AtsDetection['provider']; url: string }[] = [
-      { provider: 'GREENHOUSE', url: `https://boards-api.greenhouse.io/v1/boards/${slug}/jobs` },
-      { provider: 'LEVER', url: `https://api.lever.co/v0/postings/${slug}?mode=json&limit=1` },
-      { provider: 'ASHBY', url: `https://api.ashbyhq.com/posting-api/job-board/${slug}` },
+    // Each validator PARSES the body and confirms an actual board. Marker/
+    // substring checks are not enough: SmartRecruiters 200s with
+    // totalFound:0 for ANY slug, and redirect landing pages can contain
+    // anything. redirect:"manual" so a 3xx (Breezy's unknown-tenant answer)
+    // never counts as success.
+    const probes: {
+      provider: AtsDetection['provider'];
+      url: string;
+      validate: (parsed: unknown) => boolean;
+    }[] = [
+      {
+        provider: 'GREENHOUSE',
+        url: `https://boards-api.greenhouse.io/v1/boards/${slug}/jobs`,
+        validate: (p) => Array.isArray((p as { jobs?: unknown[] })?.jobs),
+      },
+      {
+        provider: 'LEVER',
+        url: `https://api.lever.co/v0/postings/${slug}?mode=json&limit=1`,
+        validate: (p) => Array.isArray(p),
+      },
+      {
+        provider: 'ASHBY',
+        url: `https://api.ashbyhq.com/posting-api/job-board/${slug}`,
+        validate: (p) => Array.isArray((p as { jobs?: unknown[] })?.jobs),
+      },
+      {
+        provider: 'WORKABLE',
+        url: `https://apply.workable.com/api/v1/widget/accounts/${slug}`,
+        validate: (p) => Array.isArray((p as { jobs?: unknown[] })?.jobs),
+      },
+      {
+        provider: 'SMARTRECRUITERS',
+        url: `https://api.smartrecruiters.com/v1/companies/${slug}/postings?limit=1`,
+        validate: (p) => ((p as { totalFound?: number })?.totalFound ?? 0) >= 1,
+      },
+      {
+        provider: 'RECRUITEE',
+        url: `https://${slug}.recruitee.com/api/offers/`,
+        validate: (p) => Array.isArray((p as { offers?: unknown[] })?.offers),
+      },
+      {
+        provider: 'BREEZY',
+        url: `https://${slug}.breezy.hr/json`,
+        validate: (p) => Array.isArray(p),
+      },
     ];
     for (const probe of probes) {
       try {
         const res = await fetch(probe.url, {
           headers: { 'user-agent': UA, accept: 'application/json' },
+          redirect: 'manual',
           signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
         });
         if (res.ok) {
-          // Confirm the body actually looks like a board, not an error page.
-          const body = await res.text();
-          if (body.includes('"jobs"') || body.trim().startsWith('[')) {
+          let parsed: unknown;
+          try {
+            parsed = JSON.parse(await res.text());
+          } catch {
+            continue; // HTML/garbage — not a board
+          }
+          if (probe.validate(parsed)) {
             log.push(`ATS from token guess: ${probe.provider}/${slug}`);
             return { provider: probe.provider, identifier: slug };
           }

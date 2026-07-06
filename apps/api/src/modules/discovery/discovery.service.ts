@@ -223,6 +223,9 @@ export class DiscoveryService {
             }
           : {}),
         description: company.description ?? result.metadata?.description ?? undefined,
+        githubOrg: company.githubOrg ?? result.metadata?.githubOrg ?? undefined,
+        engineeringBlogUrl:
+          company.engineeringBlogUrl ?? result.metadata?.blogUrl ?? undefined,
         confidence: computeConfidence(signals),
         confidenceSignals: { ...signals, probeLog: result.probeLog } as object,
       },
@@ -240,7 +243,11 @@ export class DiscoveryService {
     }
   }
 
-  /** The Phase B success metric: % of discovered companies now monitored. */
+  /**
+   * The Phase B success metric: % of discovered companies now monitored —
+   * overall AND per discovery source, because conversion is a property of
+   * seed quality (name-only boards ≪ curated directories with websites).
+   */
   async funnelStats() {
     const rows = await this.prisma.company.groupBy({
       by: ['discoveryStage'],
@@ -251,11 +258,31 @@ export class DiscoveryService {
     ) as Record<string, number>;
     const total = rows.reduce((s, r) => s + r._count._all, 0);
     const monitored = byStage[DiscoveryStage.MONITORED] ?? 0;
+
+    const perSource = await this.prisma.company.groupBy({
+      by: ['discoverySource', 'discoveryStage'],
+      _count: { _all: true },
+    });
+    const bySource: Record<string, { total: number; monitored: number; conversionRate: number }> =
+      {};
+    for (const row of perSource) {
+      const key = row.discoverySource ?? 'manual';
+      bySource[key] ??= { total: 0, monitored: 0, conversionRate: 0 };
+      bySource[key].total += row._count._all;
+      if (row.discoveryStage === DiscoveryStage.MONITORED) {
+        bySource[key].monitored += row._count._all;
+      }
+    }
+    for (const s of Object.values(bySource)) {
+      s.conversionRate = s.total > 0 ? Math.round((s.monitored / s.total) * 1000) / 10 : 0;
+    }
+
     return {
       total,
       byStage,
       monitored,
       conversionRate: total > 0 ? Math.round((monitored / total) * 1000) / 10 : 0,
+      bySource,
     };
   }
 }

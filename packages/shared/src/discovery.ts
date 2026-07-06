@@ -34,6 +34,8 @@ export const DiscoveryResultSchema = z.object({
     .object({
       title: z.string().nullish(),
       description: z.string().nullish(),
+      githubOrg: z.string().nullish(), // from github.com/{org} links on the site
+      blogUrl: z.url().nullish(), // engineering blog / blog link
     })
     .nullish(),
   /** Human-readable trail of what the prober tried — kept in confidenceSignals. */

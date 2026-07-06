@@ -9,6 +9,8 @@ export const AtsProviderSchema = z.enum([
   'SMARTRECRUITERS',
   'RECRUITEE',
   'TEAMTAILOR',
+  'WORKABLE',
+  'BREEZY',
   'OTHER',
   'UNKNOWN',
 ]);
@@ -62,8 +64,27 @@ export function detectAts(url: string): AtsDetection {
   if (host === 'jobs.smartrecruiters.com' || host === 'careers.smartrecruiters.com') {
     return { provider: 'SMARTRECRUITERS', identifier: segments[0] ?? null };
   }
+  if (host === 'apply.workable.com') {
+    // apply.workable.com/{account}[/j/{shortcode}] — "api" isn't an account
+    const account = segments[0] === 'api' ? null : (segments[0] ?? null);
+    return { provider: 'WORKABLE', identifier: account };
+  }
+  if (host.endsWith('.workable.com') && host !== 'www.workable.com') {
+    return { provider: 'WORKABLE', identifier: host.split('.')[0] };
+  }
+  if (host.endsWith('.breezy.hr') && host !== 'app.breezy.hr' && host !== 'www.breezy.hr') {
+    return { provider: 'BREEZY', identifier: host.split('.')[0] };
+  }
   return { provider: 'UNKNOWN', identifier: null };
 }
 
 /** ATS providers we have working crawl adapters for (workers/src/adapters). */
-export const CRAWLABLE_PROVIDERS: AtsProviderName[] = ['GREENHOUSE', 'LEVER', 'ASHBY'];
+export const CRAWLABLE_PROVIDERS: AtsProviderName[] = [
+  'GREENHOUSE',
+  'LEVER',
+  'ASHBY',
+  'WORKABLE',
+  'SMARTRECRUITERS',
+  'RECRUITEE',
+  'BREEZY',
+];

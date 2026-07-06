@@ -6,6 +6,10 @@ import { AtsAdapter } from '../adapters/types';
 import { greenhouseAdapter } from '../adapters/greenhouse';
 import { leverAdapter } from '../adapters/lever';
 import { ashbyAdapter } from '../adapters/ashby';
+import { workableAdapter } from '../adapters/workable';
+import { smartrecruitersAdapter } from '../adapters/smartrecruiters';
+import { recruiteeAdapter } from '../adapters/recruitee';
+import { breezyAdapter } from '../adapters/breezy';
 
 export interface CrawlCompanyJobData {
   companyId: string;
@@ -18,7 +22,11 @@ const ADAPTERS: Record<string, AtsAdapter> = {
   GREENHOUSE: greenhouseAdapter,
   LEVER: leverAdapter,
   ASHBY: ashbyAdapter,
-  // WORKDAY / custom sites → Python scraper via SCRAPE_HARD_TARGET (Phase 4.5)
+  WORKABLE: workableAdapter,
+  SMARTRECRUITERS: smartrecruitersAdapter,
+  RECRUITEE: recruiteeAdapter,
+  BREEZY: breezyAdapter,
+  // WORKDAY / custom sites → Python scraper via SCRAPE_HARD_TARGET (next)
 };
 
 export function startCrawlCompanyWorker(api: ApiClient): Worker<CrawlCompanyJobData> {

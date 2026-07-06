@@ -58,8 +58,17 @@ enum AtsProvider {
   SMARTRECRUITERS
   RECRUITEE
   TEAMTAILOR
+  WORKABLE
+  BREEZY
   OTHER
   UNKNOWN
+}
+
+enum HiringTrend {
+  GROWING
+  STABLE
+  DECLINING
+  INSUFFICIENT_DATA // < 14 days of monitoring history
 }
 
 enum JobStatus {
@@ -277,15 +286,17 @@ model Company {
   teamSize      Int? // from directory metadata (e.g. YC dataset)
   industry      String?
   size          CompanySize?
-  logoUrl       String?
-  linkedinUrl   String?
-  githubOrg     String?
-  description   String?
+  logoUrl            String?
+  linkedinUrl        String?
+  githubOrg          String?
+  engineeringBlogUrl String?
+  description        String?
   createdAt     DateTime     @default(now())
   updatedAt     DateTime     @updatedAt
 
-  jobs      Job[]
-  crawlRuns CrawlRun[]
+  jobs         Job[]
+  crawlRuns    CrawlRun[]
+  intelligence CompanyIntelligence?
 
   // One company per ATS board — prevents two rows crawling the same source.
   @@unique([atsProvider, atsIdentifier])
@@ -422,6 +433,38 @@ model Notification {
 
   @@index([userId, readAt])
   @@map("notifications")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Company Intelligence (Phase B.5) — derived per-company profile. Most fields
+// come from OUR OWN job corpus (LLM extraction + SQL aggregates), not from
+// external scraping — free to compute and refreshed weekly.
+// ─────────────────────────────────────────────────────────────────────────────
+
+model CompanyIntelligence {
+  id        String @id @default(cuid())
+  companyId String @unique
+
+  // LLM-extracted from this company's job descriptions
+  techStack        String[] @default([]) // normalized lowercase, matches skills vocabulary
+  remoteFriendly   Boolean?
+  visaMentioned    Boolean? // job texts mention visa sponsorship
+  hiresJuniors     Boolean? // roles at <= 2y experience seen
+  avgExperienceReq Float? // average minimum years asked across jobs
+  roleMix          Json? // { backend: n, frontend: n, fullstack: n, ai: n, devops: n, other: n }
+
+  // SQL aggregates from our own data
+  salaryMinMedian Int? // median of posted salaryMin (where disclosed)
+  salaryMaxMedian Int?
+  activeJobs      Int      @default(0)
+  hiringVelocity  Json? // { months: [{month, newJobs}], changePct }
+  hiringTrend     HiringTrend @default(INSUFFICIENT_DATA)
+
+  derivedAt DateTime @default(now())
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@map("company_intelligence")
 }
 
 // One row per crawl attempt per company — the admin panel's data source.
