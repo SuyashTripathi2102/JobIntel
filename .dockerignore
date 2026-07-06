@@ -1,0 +1,16 @@
+# Keep the build context tiny — node_modules alone is >1GB and gets
+# reinstalled inside the image anyway.
+node_modules
+**/node_modules
+.git
+**/dist
+**/.next
+**/.turbo
+**/.venv
+**/__pycache__
+docs
+*.md
+.env
+.env.*
+!.env.prod.example
+docker-data

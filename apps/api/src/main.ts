@@ -20,6 +20,9 @@ async function bootstrap() {
     }),
   );
 
+  // Containers stop with SIGTERM — drain BullMQ processors + close Prisma cleanly.
+  app.enableShutdownHooks();
+
   await app.listen(process.env.PORT ?? 3001);
 }
 bootstrap();
