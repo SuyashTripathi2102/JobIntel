@@ -54,4 +54,11 @@ export class ResumesController {
   async delete(@CurrentUser() user: AuthenticatedUser, @Param('id') id: string) {
     await this.resumesService.delete(user.id, id);
   }
+
+  /** Re-run AI parsing on a version (e.g. after a parser improvement). */
+  @Post('versions/:versionId/parse')
+  @HttpCode(HttpStatus.ACCEPTED)
+  reparse(@CurrentUser() user: AuthenticatedUser, @Param('versionId') versionId: string) {
+    return this.resumesService.enqueueParse(user.id, versionId);
+  }
 }

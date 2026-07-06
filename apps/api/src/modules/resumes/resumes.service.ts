@@ -4,10 +4,13 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
+import { InjectQueue } from '@nestjs/bullmq';
+import { Queue } from 'bullmq';
 import { randomUUID } from 'crypto';
 import { PDFParse } from 'pdf-parse';
 import { StorageService } from '../storage/storage.service';
 import { ResumesRepository } from './resumes.repository';
+import { PARSE_RESUME_QUEUE } from './resumes.processor';
 
 const MAX_RESUMES_PER_USER = 10;
 
@@ -23,6 +26,7 @@ export class ResumesService {
   constructor(
     private readonly resumes: ResumesRepository,
     private readonly storage: StorageService,
+    @InjectQueue(PARSE_RESUME_QUEUE) private readonly parseQueue: Queue,
   ) {}
 
   list(userId: string) {
@@ -71,12 +75,34 @@ export class ResumesService {
         rawText,
         extractedAt: new Date().toISOString(),
       });
+
+      // Kick off AI parsing (structured extraction + skills + embedding).
+      await this.parseQueue.add(
+        'parse',
+        { resumeVersionId: version.id },
+        { jobId: `parse-${version.id}`, removeOnComplete: true, removeOnFail: true },
+      );
+
       return { resumeId: resume.id, version };
     } catch (err) {
       // Storage/DB failed after we created the resume shell — undo it.
       if (createdNew) await this.resumes.delete(resume.id).catch(() => undefined);
       throw err;
     }
+  }
+
+  async enqueueParse(userId: string, resumeVersionId: string) {
+    // Ownership check: the version must belong to one of the user's resumes.
+    const owned = await this.resumes.findAllForUser(userId);
+    const exists = owned.some((r) => r.versions.some((v) => v.id === resumeVersionId));
+    if (!exists) throw new NotFoundException('Resume version not found');
+
+    await this.parseQueue.add(
+      'parse',
+      { resumeVersionId },
+      { jobId: `parse-${resumeVersionId}-${Date.now()}`, removeOnComplete: true, removeOnFail: true },
+    );
+    return { enqueued: true };
   }
 
   async delete(userId: string, resumeId: string): Promise<void> {

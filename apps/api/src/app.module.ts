@@ -5,7 +5,9 @@ import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { PrismaModule } from './prisma/prisma.module';
+import { AiModule } from './modules/ai/ai.module';
 import { AuthModule } from './modules/auth/auth.module';
+import { MatchingModule } from './modules/matching/matching.module';
 import { CompaniesModule } from './modules/companies/companies.module';
 import { CrawlModule } from './modules/crawl/crawl.module';
 import { InternalModule } from './modules/internal/internal.module';
@@ -29,11 +31,13 @@ import { UsersModule } from './modules/users/users.module';
     AuthModule,
     UsersModule,
     ResumesModule,
+    AiModule,
     CompaniesModule,
     JobsModule,
     InternalModule,
     CrawlModule,
-    // Phase 5+: MatchingModule, NotificationsModule
+    MatchingModule,
+    // Phase 6+: NotificationsModule
   ],
   controllers: [AppController],
   providers: [
