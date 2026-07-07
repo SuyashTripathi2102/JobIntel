@@ -1,15 +1,45 @@
 # Project Log
 
-> ## ⚡ NEXT SESSION — START HERE (written 2026-07-07 during laptop handover)
+> ## ⚡ NEXT SESSION — START HERE (updated 2026-07-08, VS Code → PowerShell session handoff)
 >
-> **Production is LIVE and autonomous** at 139.59.15.220 (DigitalOcean, Ubuntu 24.04):
-> 5 containers, schedulers ticking (crawl 15m / discovery 10m / boards 24h), Telegram
-> verified, nightly backups. Server ops: `ssh root@139.59.15.220`, `cd careeros`,
+> **Machine state (new laptop, fully set up):** working repo is `C:\Work\CareerOS`
+> (`Desktop\CarrerOs` OneDrive clone and external-disk `D:\Work\JobIntel` are stale
+> leftovers — deletable). Local stack verified: `npm run docker:up`, migrations applied,
+> API boots, scraper venv ready. SSH key + GitHub credentials both work from this machine.
+> A global permission rule allows `ssh root@139.59.15.220 *` without prompting.
+>
+> **Production is LIVE** at 139.59.15.220 (DigitalOcean, Ubuntu 24.04): 5 containers,
+> schedulers ticking (crawl 15m / discovery 10m / boards 24h), nightly backups. Deployed
+> at commit `dc07247` (2026-07-08). Server ops: `ssh root@139.59.15.220`, `cd careeros`,
 > **always** pass `--env-file .env.prod` to compose. Update = `git pull && docker compose
-> -f compose.prod.yml --env-file .env.prod up -d --build`.
+> -f compose.prod.yml --env-file .env.prod up -d --build` (migrations auto-apply on boot).
 >
-> **Phase D was scoped and approved but NOT started** (laptop had to be returned mid-setup).
-> Approved scope, in order:
+> **Current production state (read the 2026-07-07/08 incident entry below for full RCA):**
+> - Gemini free-tier daily quota exhausted → **AI pipeline paused at the circuit breaker**
+>   (fails fast, retries every 10 min). 4,287 jobs unembedded. Recovers automatically at
+>   the daily reset (~12:30pm IST) or permanently once paid quota exists.
+> - `NOTIFY_MIN_SCORE=60` (temporary), rogue account deleted, `ai_usage` table +
+>   `GET /api/ai/usage` live. Measured spend estimate: ~$3/month steady state.
+>
+> **NEXT WORK ITEM (decided 2026-07-08, before Phase D): `VertexGeminiProvider`.**
+> CareerOS uses the Gemini **Developer API** (raw fetch, `generativelanguage.googleapis.com`,
+> `?key=` auth). Google Cloud free-trial credits (Suyash has ₹28,321) can NOT pay for it —
+> they only cover **Vertex AI**. Plan: new provider class implementing `LlmProvider` +
+> `EmbeddingProvider` (split interfaces live in `modules/ai/llm.provider.ts`), registered
+> as `vertex` in the ai.module factory. generateContent body ≈ identical (URL changes to
+> `aiplatform.googleapis.com/v1/projects/{p}/locations/{l}/publishers/google/models/…`);
+> auth = service-account OAuth2 Bearer via `google-auth-library`; embeddings use `:predict`
+> (different shape); re-embed everything after switch (~$1, per-model column handles it).
+> **Blocked on Suyash:** GCP project + Vertex AI API enabled + service-account JSON key.
+> Until then the interim unblock for notifications is enabling Developer-API prepaid
+> billing OR just waiting for daily quota resets.
+>
+> **Suyash's open items:** GCP project/service account (above) · re-export resume as a
+> text-based PDF and upload (vision-parse got only 15 skills — no JavaScript/TypeScript/
+> MongoDB — depressing all match scores; likely worth more than any tuning) · GitHub rename
+> CarrerOs → CareerOS · delete the two stale repo copies.
+>
+> **Phase D — scoped and approved, NOT started.** Approved scope, in order:
 > 1. Contact/email harvesting in the prober (mailto: + jobs@/careers@/talent@ from pages
 >    already fetched) → `Company.contactEmails String[]` (migration needed) → shown in
 >    notifications. Individually-written outreach only, never bulk.
