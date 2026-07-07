@@ -34,20 +34,21 @@ export class VertexGeminiProvider implements LlmProvider, EmbeddingProvider {
   ) {
     // getOrThrow would break boot when vertex isn't selected — the module
     // factory instantiates this class eagerly, so validate lazily instead.
-    this.project = config.get<string>('GOOGLE_CLOUD_PROJECT', '');
-    this.location = config.get<string>('GOOGLE_CLOUD_LOCATION', 'us-central1');
-    this.textModel = config.get<string>(
-      'VERTEX_TEXT_MODEL',
-      config.get<string>('GEMINI_TEXT_MODEL', 'gemini-3.5-flash'),
-    );
-    this.embeddingModelId = config.get<string>(
-      'VERTEX_EMBEDDING_MODEL',
-      config.get<string>('GEMINI_EMBEDDING_MODEL', 'gemini-embedding-2'),
-    );
-    this.embeddingDims = Number(config.get('EMBEDDING_DIMS', 1536));
+    // `||` fall-throughs (not config defaults): compose ${VAR:-} yields empty
+    // strings, which ConfigService returns instead of the default.
+    this.project = config.get<string>('GOOGLE_CLOUD_PROJECT') || '';
+    this.location = config.get<string>('GOOGLE_CLOUD_LOCATION') || 'global';
+    this.textModel =
+      config.get<string>('VERTEX_TEXT_MODEL') ||
+      config.get<string>('GEMINI_TEXT_MODEL') ||
+      'gemini-3.5-flash';
+    // NB: Vertex serves gemini-embedding-001, not the Developer API's -2 name
+    this.embeddingModelId =
+      config.get<string>('VERTEX_EMBEDDING_MODEL') || 'gemini-embedding-001';
+    this.embeddingDims = Number(config.get('EMBEDDING_DIMS')) || 1536;
     // gemini-embedding models on Vertex historically cap instances-per-call
     // low; 1 is always safe, raise via env once the quota page confirms more.
-    this.embedBatchSize = Number(config.get('VERTEX_EMBED_BATCH_SIZE', 1));
+    this.embedBatchSize = Number(config.get('VERTEX_EMBED_BATCH_SIZE')) || 1;
     this.quotaCooldownMs = Number(config.get('AI_QUOTA_COOLDOWN_MS', 10 * 60_000));
   }
 
