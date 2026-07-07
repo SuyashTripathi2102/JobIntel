@@ -1,4 +1,4 @@
-import { InjectQueue, Processor, WorkerHost } from '@nestjs/bullmq';
+import { InjectQueue, OnWorkerEvent, Processor, WorkerHost } from '@nestjs/bullmq';
 import { Logger } from '@nestjs/common';
 import { Job, Queue } from 'bullmq';
 import { EMBED_JOBS_QUEUE } from '../internal/internal.constants';
@@ -17,6 +17,11 @@ export class EmbedProcessor extends WorkerHost {
     @InjectQueue(MATCH_NEW_JOBS_QUEUE) private readonly matchQueue: Queue,
   ) {
     super();
+  }
+
+  @OnWorkerEvent('failed')
+  onFailed(job: Job | undefined, err: Error) {
+    this.logger.error(`embed-jobs ${job?.id ?? '?'} failed: ${err.message}`, err.stack);
   }
 
   async process(job: Job<{ jobIds: string[] }>) {

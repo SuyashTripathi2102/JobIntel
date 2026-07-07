@@ -1,4 +1,4 @@
-import { Processor, WorkerHost } from '@nestjs/bullmq';
+import { OnWorkerEvent, Processor, WorkerHost } from '@nestjs/bullmq';
 import { Logger } from '@nestjs/common';
 import { Job } from 'bullmq';
 import { ResumeIntelligenceService } from './resume-intelligence.service';
@@ -11,6 +11,13 @@ export class ResumesProcessor extends WorkerHost {
 
   constructor(private readonly intelligence: ResumeIntelligenceService) {
     super();
+  }
+
+  // BullMQ failures are invisible without this (2026-07-08: a parse died
+  // silently mid-migration — no log, job removed, nothing to debug from).
+  @OnWorkerEvent('failed')
+  onFailed(job: Job | undefined, err: Error) {
+    this.logger.error(`parse-resume ${job?.id ?? '?'} failed: ${err.message}`, err.stack);
   }
 
   async process(job: Job<{ resumeVersionId: string }>) {

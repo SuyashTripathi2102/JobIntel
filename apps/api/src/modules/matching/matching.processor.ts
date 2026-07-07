@@ -1,4 +1,4 @@
-import { Processor, WorkerHost } from '@nestjs/bullmq';
+import { OnWorkerEvent, Processor, WorkerHost } from '@nestjs/bullmq';
 import { Logger } from '@nestjs/common';
 import { Job } from 'bullmq';
 import { MatchingService } from './matching.service';
@@ -11,6 +11,11 @@ export class MatchingProcessor extends WorkerHost {
 
   constructor(private readonly matching: MatchingService) {
     super();
+  }
+
+  @OnWorkerEvent('failed')
+  onFailed(job: Job | undefined, err: Error) {
+    this.logger.error(`generate-matches ${job?.id ?? '?'} failed: ${err.message}`, err.stack);
   }
 
   async process(job: Job<{ userId: string }>) {
