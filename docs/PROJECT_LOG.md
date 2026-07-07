@@ -39,7 +39,14 @@
 > MongoDB — depressing all match scores; likely worth more than any tuning) · GitHub rename
 > CarrerOs → CareerOS · delete the two stale repo copies.
 >
-> **Phase D — scoped and approved, NOT started.** Approved scope, in order:
+> **2026-07-08 PRODUCT PIVOT: docs/ROADMAP.md is now the canonical plan** —
+> "AI recruiter, not AI crawler": decision layer, opportunity-first notifications,
+> referral subsystem, application strategy, tracker-then-learning-engine, phases D–H
+> with hard principles (no fabricated numbers, public-source contacts only, assistive
+> never autonomous). The Phase D list below is superseded by ROADMAP.md Phase D but
+> kept for history:
+>
+> **Phase D — original scope (superseded, see ROADMAP.md):**
 > 1. Contact/email harvesting in the prober (mailto: + jobs@/careers@/talent@ from pages
 >    already fetched) → `Company.contactEmails String[]` (migration needed) → shown in
 >    notifications. Individually-written outreach only, never bulk.
