@@ -32,8 +32,13 @@
 > (verdict/banner/buttons), India-only scoping via UserPreference.countries=["IN"],
 > POST /auth/change-password (**Suyash: change your password**), discoverySource=board
 > fix, BullMQ failure logging, salvage JSON parser. Resume now parses to 26 skills
-> (Vertex vision) vs 15. **Next build items: ROADMAP Phase D-2 (India-first discovery)
-> then D-3 (contact/referral subsystem).**
+> (Vertex vision) vs 15. Post-feedback (70d job read "High"): freshness weight 15→20
+> with a steep curve (70d = 0), staleness interpreted in verdicts (>30d warning,
+> >60d forced SKIP), and NOTIFY_MAX_AGE_DAYS=30 push gate — stale matches stay
+> searchable but never hit Telegram. Notification-tier digest (medium-priority daily
+> batch) is designed but NOT built — pairs with dashboard at ROADMAP E0.
+> **Next build items: ROADMAP Phase D-2 (India-first discovery) then D-3
+> (contact/referral subsystem).**
 >
 > **Suyash's open items:** GCP project/service account (above) · re-export resume as a
 > text-based PDF and upload (vision-parse got only 15 skills — no JavaScript/TypeScript/
