@@ -37,8 +37,21 @@
 > >60d forced SKIP), and NOTIFY_MAX_AGE_DAYS=30 push gate — stale matches stay
 > searchable but never hit Telegram. Notification-tier digest (medium-priority daily
 > batch) is designed but NOT built — pairs with dashboard at ROADMAP E0.
-> **Next build items: ROADMAP Phase D-2 (India-first discovery) then D-3
-> (contact/referral subsystem).**
+> **Context-aware freshness shipped** (curated big-tech evergreen tier + live
+> hiring-activity signal + location tags + city-preference boost — see ROADMAP
+> "Context-aware freshness"). Suyash's prefs: countries=["IN"],
+> cities=[Indore, Bangalore, Pune, Hyderabad].
+>
+> **Phase D-2 STARTED (2026-07-08 morning): 139 curated Indian companies seeded**
+> into discovery (`source: india-seed` — fintech/SaaS/consumer + 6 Indore firms,
+> all with websites; result {created:139, merged:6}). The prober converts them
+> autonomously (10-min ticks). Remaining D-2 work: verify conversion rate after
+> ~24h (funnel stats), city-based discovery search for smaller companies, more
+> India seed sources. Then D-3 (contact/referral subsystem).
+>
+> **Notification funnel reality check (why only ~4 notifications so far):**
+> 5,266 jobs → 250 India-relevant (4.7%) → 89 scored → 4 ≥60 → all 4 sent.
+> The pipeline is healthy; supply was the bottleneck — hence this seed.
 >
 > **Suyash's open items:** GCP project/service account (above) · re-export resume as a
 > text-based PDF and upload (vision-parse got only 15 skills — no JavaScript/TypeScript/
