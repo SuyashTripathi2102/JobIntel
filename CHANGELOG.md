@@ -10,6 +10,12 @@ what changed in the code (that's git log). Newest first.
   scores), what's worth a look, which companies are hiring hardest this week,
   and your top missing skills. Medium-priority matches now live here instead
   of pinging your phone.
+- **CareerOS has a face: the Mission Control dashboard** at
+  http://139.59.15.220:3000 — the first deployed web UI. Sign in and see the
+  north-star funnel (jobs watched → matched → recommended → notified →
+  **applied**), today's apply-list with score badges and one-click Apply,
+  trending companies, and your missing-skills chips. Telegram notifies;
+  the dashboard manages.
 
 ## v0.2 — 2026-07-08 · "The recruiter learns judgment"
 
