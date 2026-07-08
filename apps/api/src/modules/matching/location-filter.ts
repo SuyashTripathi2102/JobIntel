@@ -28,6 +28,28 @@ export function countrySql(countries: string[]): Prisma.Sql {
     : Prisma.sql`j.country = ANY(${countries})`;
 }
 
+const INDIA_CITIES = [
+  'Bengaluru', 'Bangalore', 'Mumbai', 'Pune', 'New Delhi', 'Delhi NCR',
+  'Delhi', 'Hyderabad', 'Chennai', 'Noida', 'Gurgaon', 'Gurugram', 'Indore',
+  'Kolkata', 'Ahmedabad', 'Jaipur', 'Kochi', 'Trivandrum', 'Chandigarh',
+];
+
+/** "📍 Bangalore · 🏠 Remote" — scannable tags instead of raw location text. */
+export function locationTags(location: string | null, workMode: string | null): string {
+  const parts: string[] = [];
+  if (location) {
+    const city = INDIA_CITIES.find((c) => location.toLowerCase().includes(c.toLowerCase()));
+    if (city) parts.push(`📍 ${city}`);
+    else if (/india/i.test(location)) parts.push('📍 India');
+    else parts.push(`🌍 ${location}`);
+  }
+  const mode = workMode ?? (location && /remote/i.test(location) ? 'REMOTE' : null);
+  if (mode === 'REMOTE') parts.push('🏠 Remote');
+  else if (mode === 'HYBRID') parts.push('🏢 Hybrid');
+  else if (mode === 'ONSITE') parts.push('🏢 Onsite');
+  return parts.join(' · ');
+}
+
 /** JS-side twin of countrySql for the notification gate. */
 export function jobMatchesCountries(
   countries: string[],

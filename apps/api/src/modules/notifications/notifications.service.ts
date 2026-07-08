@@ -2,7 +2,8 @@ import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { NotificationType, Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
-import { jobMatchesCountries } from '../matching/location-filter';
+import { jobMatchesCountries, locationTags } from '../matching/location-filter';
+import { companyTier, isEvergreen } from '../opportunity/company-tier';
 import type { ScoreModule } from '../opportunity/opportunity.service';
 import { InlineButton, TelegramChannel } from './channels';
 import { decide, freshnessLine, salaryLine } from './decision';
@@ -63,13 +64,25 @@ export class NotificationsService {
       return false;
     }
 
-    // Staleness gate: old postings stay searchable in matches, but they don't
-    // interrupt your phone — fresh opportunities must not compete with zombies.
+    // Staleness gate — context-aware: evergreen employers (big tech) and
+    // companies observably still hiring get a longer window; everyone else's
+    // stale postings stay searchable but never interrupt your phone.
+    const tier = companyTier(match.job.company.name);
+    const recentJobs14d = await this.prisma.job.count({
+      where: {
+        companyId: match.job.companyId,
+        firstSeenAt: { gte: new Date(Date.now() - 14 * 86_400_000) },
+      },
+    });
+    const evergreen = isEvergreen(tier);
+    const activelyHiring = recentJobs14d >= 3;
+    const effectiveMaxAge = evergreen || activelyHiring ? this.maxAgeDays * 2 : this.maxAgeDays;
+
     const ageDays =
       (Date.now() - (match.job.postedAt ?? match.job.firstSeenAt).getTime()) / 86_400_000;
-    if (ageDays > this.maxAgeDays) {
+    if (ageDays > effectiveMaxAge) {
       this.logger.log(
-        `holding notification for "${match.job.title}" — posted ${Math.round(ageDays)}d ago (max ${this.maxAgeDays}d)`,
+        `holding notification for "${match.job.title}" — posted ${Math.round(ageDays)}d ago (max ${effectiveMaxAge}d${evergreen ? ', evergreen' : ''})`,
       );
       return false;
     }
@@ -106,7 +119,7 @@ export class NotificationsService {
       },
     });
 
-    const text = this.formatMatch(match, twinCount);
+    const text = this.formatMatch(match, twinCount, { evergreen, activelyHiring });
     await this.deliver(
       match.user.id,
       text,
@@ -147,6 +160,7 @@ export class NotificationsService {
         url: string;
         externalId: string;
         location: string | null;
+        workMode: string | null;
         postedAt: Date | null;
         firstSeenAt: Date;
         salaryMin: number | null;
@@ -161,6 +175,7 @@ export class NotificationsService {
       };
     },
     twinCount = 1,
+    context: { evergreen?: boolean; activelyHiring?: boolean } = {},
   ): string {
     const modules = Array.isArray(match.scoreBreakdown)
       ? (match.scoreBreakdown as ScoreModule[])
@@ -173,13 +188,18 @@ export class NotificationsService {
       modules,
       ageDays:
         (Date.now() - (match.job.postedAt ?? match.job.firstSeenAt).getTime()) / 86_400_000,
+      evergreen: context.evergreen,
+      activelyHiring: context.activelyHiring,
     });
 
     const lines: string[] = [
       `<b>${decision.banner}</b>`,
       ``,
       `<b>${escapeHtml(match.job.title)}</b>`,
-      `${escapeHtml(match.job.company.name)}${match.job.location ? ' · 📍 ' + escapeHtml(match.job.location) : ''}`,
+      `${escapeHtml(match.job.company.name)}${(() => {
+        const tags = locationTags(match.job.location, match.job.workMode);
+        return tags ? ' · ' + escapeHtml(tags) : '';
+      })()}`,
       `${freshnessLine(match.job.postedAt, match.job.firstSeenAt)} · ${salaryLine(match.job.salaryMin, match.job.salaryMax, match.job.currency)}`,
       ``,
       `🎯 Resume match: <b>${Math.round(match.overallScore)}%</b>`,

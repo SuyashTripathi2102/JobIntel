@@ -15,6 +15,10 @@ export interface DecisionInput {
   modules: ScoreModule[];
   /** Days since posted (or first seen). Staleness caps the verdict. */
   ageDays?: number;
+  /** Big-tech/evergreen employers keep strategic roles open for months. */
+  evergreen?: boolean;
+  /** Company added ≥3 jobs in the last 14 days — observably still hiring. */
+  activelyHiring?: boolean;
 }
 
 export interface Decision {
@@ -54,12 +58,25 @@ export function decide(input: DecisionInput): Decision {
   }
 
   // Staleness interprets the age instead of just displaying it (2026-07-08
-  // feedback: a 70d-old posting must never read as high priority).
+  // feedback: a 70d-old posting must never read as high priority) — but a
+  // recruiter reads age in CONTEXT: Google leaves strategic roles open for
+  // months; a 20-person startup's 70d posting is a zombie.
   const age = input.ageDays ?? 0;
+  const stillHiring = input.evergreen || input.activelyHiring;
   if (age > 60) {
-    blockers.push(`posted ${Math.round(age)}d ago — likely stale; hiring probability is low`);
+    if (stillHiring) {
+      reasons.push(
+        `open ${Math.round(age)}d — long, but this company hires continuously; likely still active`,
+      );
+    } else {
+      blockers.push(`posted ${Math.round(age)}d ago — likely stale; hiring probability is low`);
+    }
   } else if (age > 30) {
-    blockers.push(`posted ${Math.round(age)}d ago — role may be in late hiring stages`);
+    if (stillHiring) {
+      reasons.push(`open ${Math.round(age)}d — company is actively hiring, role likely live`);
+    } else {
+      blockers.push(`posted ${Math.round(age)}d ago — role may be in late hiring stages`);
+    }
   } else if (age > 14) {
     reasons.push(`posted ${Math.round(age)}d ago — not fresh, apply soon if interested`);
   }
@@ -71,7 +88,7 @@ export function decide(input: DecisionInput): Decision {
   // A strong score with a hard blocker is still worth a human look — downgrade,
   // never silently drop.
   if (verdict === 'APPLY' && blockers.length > 0) verdict = 'CONSIDER';
-  if (age > 60) verdict = 'SKIP';
+  if (age > 60 && !stillHiring) verdict = 'SKIP';
 
   const tier =
     score >= 75

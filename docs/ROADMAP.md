@@ -61,6 +61,17 @@ The JOB is evidence. The OPPORTUNITY — with a decision attached — is the pro
    discoverySource; scheduled rescore sweep (threshold changes must not
    strand qualifying matches).
 
+### Context-aware freshness (shipped v1, 2026-07-08 — evolves in F)
+
+Age is read in context, recruiter-style: curated big-tech tier = evergreen
+(2× notify window, softened verdicts), live hiring activity (jobs added last
+14d) rescues unknown-but-active companies, everyone else gets the strict
+curve. **Phase F upgrade:** learned per-company posting lifetime from
+firstSeenAt/lastSeenAt/REMOVED history (needs weeks of observation — DB
+started 2026-07-07) replaces the static tier list as the evergreen signal.
+Also deferred to F: user-configurable boost values, preferredCompanies
+preference (schema addition), star-weighted city preferences.
+
 ## Phase E — Apply Better
 
 0. **Dashboard v1** (pulled forward deliberately): today's high-priority

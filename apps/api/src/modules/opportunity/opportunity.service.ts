@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { HiringTrend, JobStatus, Prisma } from '@prisma/client';
 import { createHash } from 'crypto';
 import { PrismaService } from '../../prisma/prisma.service';
+import { companyTier } from './company-tier';
 
 /**
  * Opportunity Score (ADR-10): modular scorers, each returning a 0-100 score,
@@ -33,6 +34,7 @@ interface ScoringContext {
   };
   job: {
     title: string;
+    location: string | null;
     postedAt: Date | null;
     firstSeenAt: Date;
     workMode: string | null;
@@ -45,10 +47,14 @@ interface ScoringContext {
     workModes: string[];
     minSalary: number | null;
     salaryCurrency: string | null;
+    cities: string[];
   } | null;
   company: {
+    name: string;
     confidence: number;
     hiringTrend: HiringTrend | null;
+    /** Jobs this company added in the last 14 days — live hiring activity. */
+    recentJobs14d: number;
   };
 }
 
@@ -60,6 +66,7 @@ const WEIGHTS = {
   salaryPreference: 5,
   companyQuality: 5,
   hiringVelocity: 5,
+  cityPreference: 5, // boost-only module — added only on a match
   skillGap: 5,
 } as const;
 
@@ -87,6 +94,7 @@ export class OpportunityService {
       },
       job: {
         title: match.job.title,
+        location: match.job.location,
         postedAt: match.job.postedAt,
         firstSeenAt: match.job.firstSeenAt,
         workMode: match.job.workMode,
@@ -100,11 +108,19 @@ export class OpportunityService {
             workModes: match.user.preference.workModes,
             minSalary: match.user.preference.minSalary,
             salaryCurrency: match.user.preference.salaryCurrency,
+            cities: match.user.preference.cities,
           }
         : null,
       company: {
+        name: match.job.company.name,
         confidence: match.job.company.confidence,
         hiringTrend: match.job.company.intelligence?.hiringTrend ?? null,
+        recentJobs14d: await this.prisma.job.count({
+          where: {
+            companyId: match.job.companyId,
+            firstSeenAt: { gte: new Date(Date.now() - 14 * 86_400_000) },
+          },
+        }),
       },
     });
 
@@ -204,15 +220,21 @@ export class OpportunityService {
       }
     }
 
-    // 6. Company quality — discovery confidence as a proxy until richer data.
+    // 6. Company quality — discovery confidence, floored for curated big tech.
+    const tier = companyTier(ctx.company.name);
     modules.push({
       module: 'companyQuality',
-      score: ctx.company.confidence,
+      score: tier === 'BIG_TECH' ? Math.max(ctx.company.confidence, 85) : ctx.company.confidence,
       weight: WEIGHTS.companyQuality,
-      reason: `company confidence ${Math.round(ctx.company.confidence)}/100`,
+      reason:
+        tier === 'BIG_TECH'
+          ? `big tech (${ctx.company.name})`
+          : `company confidence ${Math.round(ctx.company.confidence)}/100`,
     });
 
-    // 7. Hiring velocity — a growing team reads more applications.
+    // 7. Hiring velocity — a growing team reads more applications. Prefer the
+    // derived intelligence trend; fall back to the LIVE signal (jobs added in
+    // the last 14 days) so this module never silently drops out.
     if (ctx.company.hiringTrend && ctx.company.hiringTrend !== HiringTrend.INSUFFICIENT_DATA) {
       const score =
         ctx.company.hiringTrend === HiringTrend.GROWING
@@ -226,6 +248,34 @@ export class OpportunityService {
         weight: WEIGHTS.hiringVelocity,
         reason: `hiring trend: ${ctx.company.hiringTrend.toLowerCase()}`,
       });
+    } else {
+      const recent = ctx.company.recentJobs14d;
+      modules.push({
+        module: 'hiringVelocity',
+        score: recent >= 10 ? 95 : recent >= 3 ? 75 : recent >= 1 ? 55 : 30,
+        weight: WEIGHTS.hiringVelocity,
+        reason:
+          recent >= 3
+            ? `actively hiring — ${recent} new roles in 14d`
+            : recent >= 1
+              ? `${recent} new role(s) in 14d`
+              : 'no new openings in 14d',
+      });
+    }
+
+    // 7b. City preference — boost only, never penalize (location is often
+    // missing or generic; absence of a match must not drag the score).
+    if (ctx.prefs?.cities?.length && ctx.job.location) {
+      const loc = ctx.job.location.toLowerCase();
+      const hit = ctx.prefs.cities.find((c) => loc.includes(c.toLowerCase()));
+      if (hit) {
+        modules.push({
+          module: 'cityPreference',
+          score: 100,
+          weight: WEIGHTS.cityPreference,
+          reason: `in your preferred city (${hit})`,
+        });
+      }
     }
 
     // 8. Skill gap — a couple of missing skills is normal; many is a wall.
