@@ -13,6 +13,7 @@ const RENOTIFY_SCORE_DELTA = 5; // re-notify only if the opportunity improved th
 export class NotificationsService {
   private readonly logger = new Logger(NotificationsService.name);
   private readonly minScore: number;
+  private readonly maxAgeDays: number;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -20,6 +21,7 @@ export class NotificationsService {
     config: ConfigService,
   ) {
     this.minScore = Number(config.get('NOTIFY_MIN_SCORE', 70));
+    this.maxAgeDays = Number(config.get('NOTIFY_MAX_AGE_DAYS')) || 30;
   }
 
   /**
@@ -57,6 +59,17 @@ export class NotificationsService {
     if (!jobMatchesCountries(countries, match.job)) {
       this.logger.log(
         `holding notification for ${match.job.company.name} — outside preferred countries [${countries.join(',')}]`,
+      );
+      return false;
+    }
+
+    // Staleness gate: old postings stay searchable in matches, but they don't
+    // interrupt your phone — fresh opportunities must not compete with zombies.
+    const ageDays =
+      (Date.now() - (match.job.postedAt ?? match.job.firstSeenAt).getTime()) / 86_400_000;
+    if (ageDays > this.maxAgeDays) {
+      this.logger.log(
+        `holding notification for "${match.job.title}" — posted ${Math.round(ageDays)}d ago (max ${this.maxAgeDays}d)`,
       );
       return false;
     }
@@ -158,6 +171,8 @@ export class NotificationsService {
       resumeMatch: match.overallScore,
       missingSkills: match.missingSkills,
       modules,
+      ageDays:
+        (Date.now() - (match.job.postedAt ?? match.job.firstSeenAt).getTime()) / 86_400_000,
     });
 
     const lines: string[] = [

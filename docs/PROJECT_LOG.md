@@ -21,18 +21,19 @@
 > - `NOTIFY_MIN_SCORE=60` (temporary), rogue account deleted, `ai_usage` table +
 >   `GET /api/ai/usage` live. Measured spend estimate: ~$3/month steady state.
 >
-> **NEXT WORK ITEM (decided 2026-07-08, before Phase D): `VertexGeminiProvider`.**
-> CareerOS uses the Gemini **Developer API** (raw fetch, `generativelanguage.googleapis.com`,
-> `?key=` auth). Google Cloud free-trial credits (Suyash has ₹28,321) can NOT pay for it —
-> they only cover **Vertex AI**. Plan: new provider class implementing `LlmProvider` +
-> `EmbeddingProvider` (split interfaces live in `modules/ai/llm.provider.ts`), registered
-> as `vertex` in the ai.module factory. generateContent body ≈ identical (URL changes to
-> `aiplatform.googleapis.com/v1/projects/{p}/locations/{l}/publishers/google/models/…`);
-> auth = service-account OAuth2 Bearer via `google-auth-library`; embeddings use `:predict`
-> (different shape); re-embed everything after switch (~$1, per-model column handles it).
-> **Blocked on Suyash:** GCP project + Vertex AI API enabled + service-account JSON key.
-> Until then the interim unblock for notifications is enabling Developer-API prepaid
-> billing OR just waiting for daily quota resets.
+> **VERTEX MIGRATION: DONE (2026-07-08 ~05:00 IST).** Prod runs `AI_PROVIDER=vertex`,
+> project `gen-lang-client-0080961687`, location `global`, models gemini-3.5-flash +
+> gemini-embedding-001. All 5,263 jobs + resume re-embedded and validated; backups
+> dropped; ₹28,321 credits paying (expire Oct 7 2026). Runbook + rollback:
+> docs/VERTEX_MIGRATION.md. SA key at /root/careeros/secrets/vertex-sa.json (600) and
+> locally at C:\Work\CareerOS\secrets\ (both gitignored).
+>
+> **Also LIVE since the pivot (see ROADMAP.md):** Phase D-1 decision-layer notifications
+> (verdict/banner/buttons), India-only scoping via UserPreference.countries=["IN"],
+> POST /auth/change-password (**Suyash: change your password**), discoverySource=board
+> fix, BullMQ failure logging, salvage JSON parser. Resume now parses to 26 skills
+> (Vertex vision) vs 15. **Next build items: ROADMAP Phase D-2 (India-first discovery)
+> then D-3 (contact/referral subsystem).**
 >
 > **Suyash's open items:** GCP project/service account (above) · re-export resume as a
 > text-based PDF and upload (vision-parse got only 15 skills — no JavaScript/TypeScript/

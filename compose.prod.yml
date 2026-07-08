@@ -109,6 +109,7 @@ services:
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
       TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
       NOTIFY_MIN_SCORE: ${NOTIFY_MIN_SCORE:-70}
+      NOTIFY_MAX_AGE_DAYS: ${NOTIFY_MAX_AGE_DAYS:-30}
     volumes:
       # chmod 600, NOT in git. Harmless empty dir mount until the key exists.
       - ./secrets:/secrets:ro

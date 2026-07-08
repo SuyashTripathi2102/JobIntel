@@ -13,6 +13,8 @@ export interface DecisionInput {
   resumeMatch: number;
   missingSkills: string[];
   modules: ScoreModule[];
+  /** Days since posted (or first seen). Staleness caps the verdict. */
+  ageDays?: number;
 }
 
 export interface Decision {
@@ -51,6 +53,17 @@ export function decide(input: DecisionInput): Decision {
     blockers.push(`${input.missingSkills.length} skill gaps (${input.missingSkills.slice(0, 4).join(', ')}…)`);
   }
 
+  // Staleness interprets the age instead of just displaying it (2026-07-08
+  // feedback: a 70d-old posting must never read as high priority).
+  const age = input.ageDays ?? 0;
+  if (age > 60) {
+    blockers.push(`posted ${Math.round(age)}d ago — likely stale; hiring probability is low`);
+  } else if (age > 30) {
+    blockers.push(`posted ${Math.round(age)}d ago — role may be in late hiring stages`);
+  } else if (age > 14) {
+    reasons.push(`posted ${Math.round(age)}d ago — not fresh, apply soon if interested`);
+  }
+
   let verdict: Decision['verdict'];
   if (score >= 75 && blockers.length === 0) verdict = 'APPLY';
   else if (score >= 60) verdict = 'CONSIDER';
@@ -58,6 +71,7 @@ export function decide(input: DecisionInput): Decision {
   // A strong score with a hard blocker is still worth a human look — downgrade,
   // never silently drop.
   if (verdict === 'APPLY' && blockers.length > 0) verdict = 'CONSIDER';
+  if (age > 60) verdict = 'SKIP';
 
   const tier =
     score >= 75

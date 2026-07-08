@@ -55,9 +55,9 @@ interface ScoringContext {
 const WEIGHTS = {
   resumeFit: 35,
   experienceFit: 15,
-  freshness: 15,
+  freshness: 20, // raised 15→20 (2026-07-08): 70d-old postings were reading "High"
   remotePreference: 10,
-  salaryPreference: 10,
+  salaryPreference: 5,
   companyQuality: 5,
   hiringVelocity: 5,
   skillGap: 5,
@@ -144,10 +144,22 @@ export class OpportunityService {
     });
 
     // 3. Freshness — applying within 48h measurably raises response rates.
+    // Steep by design: a 60d-old posting is probably in late stages or a
+    // zombie listing; it must not compete with this week's openings.
     const seen = ctx.job.postedAt ?? ctx.job.firstSeenAt;
     const ageHours = (Date.now() - seen.getTime()) / 3_600_000;
+    const ageDays = ageHours / 24;
     const freshScore =
-      ageHours <= 24 ? 100 : ageHours <= 72 ? 85 : ageHours <= 168 ? 65 : ageHours <= 720 ? 40 : 15;
+      ageHours <= 24 ? 100
+      : ageDays <= 2 ? 95
+      : ageDays <= 3 ? 90
+      : ageDays <= 7 ? 80
+      : ageDays <= 14 ? 65
+      : ageDays <= 21 ? 50
+      : ageDays <= 30 ? 35
+      : ageDays <= 45 ? 20
+      : ageDays <= 60 ? 10
+      : 0;
     modules.push({
       module: 'freshness',
       score: freshScore,
