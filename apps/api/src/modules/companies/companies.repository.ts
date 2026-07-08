@@ -2,10 +2,18 @@ import { Injectable } from '@nestjs/common';
 import { AtsProvider, Company, Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 
+// Must match the adapter map in apps/workers/src/processors/
+// crawl-company.processor.ts. Found stale 2026-07-08: WORKABLE (the dominant
+// ATS among Indian startups) had a shipped adapter but was missing here, so
+// 36 monitored india-seed companies were never crawled.
 const CRAWLABLE: AtsProvider[] = [
   AtsProvider.GREENHOUSE,
   AtsProvider.LEVER,
   AtsProvider.ASHBY,
+  AtsProvider.WORKABLE,
+  AtsProvider.SMARTRECRUITERS,
+  AtsProvider.RECRUITEE,
+  AtsProvider.BREEZY,
 ];
 
 @Injectable()
