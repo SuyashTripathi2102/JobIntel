@@ -10,6 +10,7 @@ import { workableAdapter } from '../adapters/workable';
 import { smartrecruitersAdapter } from '../adapters/smartrecruiters';
 import { recruiteeAdapter } from '../adapters/recruitee';
 import { breezyAdapter } from '../adapters/breezy';
+import { kekaAdapter } from '../adapters/keka';
 
 export interface CrawlCompanyJobData {
   companyId: string;
@@ -18,6 +19,8 @@ export interface CrawlCompanyJobData {
   atsIdentifier: string;
 }
 
+// Keep in sync with CRAWLABLE_PROVIDERS in packages/shared/src/ats.ts —
+// that list gates which companies the API hands out for crawling.
 const ADAPTERS: Record<string, AtsAdapter> = {
   GREENHOUSE: greenhouseAdapter,
   LEVER: leverAdapter,
@@ -26,7 +29,9 @@ const ADAPTERS: Record<string, AtsAdapter> = {
   SMARTRECRUITERS: smartrecruitersAdapter,
   RECRUITEE: recruiteeAdapter,
   BREEZY: breezyAdapter,
-  // WORKDAY / custom sites → Python scraper via SCRAPE_HARD_TARGET (next)
+  KEKA: kekaAdapter,
+  // DARWINBOX: JS-hydrated SPA → Python scraper via SCRAPE_HARD_TARGET
+  // WORKDAY / custom sites → same scraper route
 };
 
 export function startCrawlCompanyWorker(api: ApiClient): Worker<CrawlCompanyJobData> {

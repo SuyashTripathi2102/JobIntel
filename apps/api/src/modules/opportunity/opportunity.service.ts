@@ -115,10 +115,15 @@ export class OpportunityService {
         name: match.job.company.name,
         confidence: match.job.company.confidence,
         hiringTrend: match.job.company.intelligence?.hiringTrend ?? null,
+        // Prefer postedAt: firstSeenAt spikes on a company's FIRST crawl
+        // (whole board looks "new"), inflating the hiring-activity signal.
         recentJobs14d: await this.prisma.job.count({
           where: {
             companyId: match.job.companyId,
-            firstSeenAt: { gte: new Date(Date.now() - 14 * 86_400_000) },
+            OR: [
+              { postedAt: { gte: new Date(Date.now() - 14 * 86_400_000) } },
+              { postedAt: null, firstSeenAt: { gte: new Date(Date.now() - 14 * 86_400_000) } },
+            ],
           },
         }),
       },

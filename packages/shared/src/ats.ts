@@ -11,6 +11,11 @@ export const AtsProviderSchema = z.enum([
   'TEAMTAILOR',
   'WORKABLE',
   'BREEZY',
+  // Indian ATS family (2026-07-09) — where Indian companies actually post
+  'KEKA',
+  'DARWINBOX',
+  'ZOHO_RECRUIT',
+  'FRESHTEAM',
   'OTHER',
   'UNKNOWN',
 ]);
@@ -75,10 +80,29 @@ export function detectAts(url: string): AtsDetection {
   if (host.endsWith('.breezy.hr') && host !== 'app.breezy.hr' && host !== 'www.breezy.hr') {
     return { provider: 'BREEZY', identifier: host.split('.')[0] };
   }
+  if (host.endsWith('.keka.com') && !['www', 'app', 'cdn'].includes(host.split('.')[0])) {
+    // Tenant from subdomain; the adapter resolves the org document id from
+    // the careers page at crawl time (it's embedded in page content, not URL).
+    return { provider: 'KEKA', identifier: host.split('.')[0] };
+  }
+  if (
+    (host.endsWith('.darwinbox.in') || host.endsWith('.darwinbox.com')) &&
+    !['www', 'app'].includes(host.split('.')[0])
+  ) {
+    return { provider: 'DARWINBOX', identifier: host.split('.')[0] };
+  }
+  if (host.endsWith('.zohorecruit.com') && host.split('.')[0] !== 'www') {
+    return { provider: 'ZOHO_RECRUIT', identifier: host.split('.')[0] };
+  }
+  if (host.endsWith('.freshteam.com') && host.split('.')[0] !== 'www') {
+    return { provider: 'FRESHTEAM', identifier: host.split('.')[0] };
+  }
   return { provider: 'UNKNOWN', identifier: null };
 }
 
-/** ATS providers we have working crawl adapters for (workers/src/adapters). */
+/** ATS providers we have working crawl adapters for (workers/src/adapters).
+ *  DARWINBOX/ZOHO_RECRUIT/FRESHTEAM are detected (companies get tagged) but
+ *  not yet crawlable — Darwinbox needs the Playwright scraper route. */
 export const CRAWLABLE_PROVIDERS: AtsProviderName[] = [
   'GREENHOUSE',
   'LEVER',
@@ -87,4 +111,5 @@ export const CRAWLABLE_PROVIDERS: AtsProviderName[] = [
   'SMARTRECRUITERS',
   'RECRUITEE',
   'BREEZY',
+  'KEKA',
 ];

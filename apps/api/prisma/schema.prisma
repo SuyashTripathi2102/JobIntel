@@ -50,6 +50,7 @@ enum ApplicationStatus {
   WITHDRAWN
 }
 
+// Keep in sync with packages/shared/src/ats.ts AtsProviderSchema
 enum AtsProvider {
   GREENHOUSE
   LEVER
@@ -60,6 +61,10 @@ enum AtsProvider {
   TEAMTAILOR
   WORKABLE
   BREEZY
+  KEKA
+  DARWINBOX
+  ZOHO_RECRUIT
+  FRESHTEAM
   OTHER
   UNKNOWN
 }
