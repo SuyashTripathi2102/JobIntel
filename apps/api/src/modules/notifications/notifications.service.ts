@@ -223,7 +223,9 @@ export class NotificationsService {
     for (const reason of decision.reasons) lines.push(`• ${escapeHtml(reason)}`);
 
     if (match.reasoning) {
-      lines.push(``, `<i>${escapeHtml(truncate(match.reasoning, 220))}</i>`);
+      // Full reasoning — the "why" is the product; Telegram allows 4096 chars,
+      // so cap only defensively, never mid-thought (2026-07-09 feedback).
+      lines.push(``, `<i>${escapeHtml(truncate(match.reasoning, 1500))}</i>`);
     }
 
     if (twinCount > 1) {

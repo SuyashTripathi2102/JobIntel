@@ -28,6 +28,10 @@ export class ApiClient {
     return this.request('POST', '/internal/daily-brief');
   }
 
+  triggerConsiderDigest(): Promise<{ sent: number }> {
+    return this.request('POST', '/internal/daily-brief/consider-digest');
+  }
+
   syncCompanyJobs(companyId: string, source: string, jobs: NormalizedJob[]): Promise<SyncResult> {
     return this.request('POST', `/internal/companies/${companyId}/jobs/sync`, { source, jobs });
   }

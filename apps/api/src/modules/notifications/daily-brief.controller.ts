@@ -15,4 +15,10 @@ export class DailyBriefInternalController {
   send() {
     return this.brief.sendAll();
   }
+
+  @Post('consider-digest')
+  @HttpCode(HttpStatus.OK)
+  considerDigest() {
+    return this.brief.sendConsiderDigest();
+  }
 }

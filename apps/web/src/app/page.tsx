@@ -30,6 +30,19 @@ interface Dashboard {
     notified: number;
     applied: number;
   };
+  pipeline: {
+    since: string;
+    lastSuccessfulCrawl: string | null;
+    crawls: { succeeded: number; failed: number; topFailures: { reason: string; count: number }[] };
+    newJobs: number;
+    indiaJobs: number;
+    matched: number;
+    apply: number;
+    consider: number;
+    skip: number;
+    notificationsSent: number;
+    explanation: string;
+  };
 }
 
 /** Score badge: tier semantics (status colors), number always visible. */
@@ -187,6 +200,37 @@ export default function MissionControl() {
         <Tile label="Applied" value={funnel.applied} hint="the number that matters" />
       </section>
 
+      {/* Today Pipeline — "why am I / am I not getting jobs?" */}
+      <section className="mt-6 rounded-xl border border-neutral-800 bg-neutral-900 p-4">
+        <div className="flex items-baseline justify-between">
+          <h2 className="text-sm font-medium uppercase tracking-wide text-neutral-400">
+            Since 8 AM
+          </h2>
+          <span className="text-[11px] text-neutral-500">
+            {data.pipeline.lastSuccessfulCrawl
+              ? `last crawl ${new Date(data.pipeline.lastSuccessfulCrawl).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}`
+              : 'no crawl yet'}
+          </span>
+        </div>
+        <div className="mt-3 grid grid-cols-3 gap-2 text-sm sm:grid-cols-6">
+          <PipeStat label="Crawls" value={data.pipeline.crawls.succeeded} />
+          <PipeStat label="New jobs" value={data.pipeline.newJobs} />
+          <PipeStat label="India" value={data.pipeline.indiaJobs} />
+          <PipeStat label="Apply" value={data.pipeline.apply} tone="good" />
+          <PipeStat label="Consider" value={data.pipeline.consider} tone="mid" />
+          <PipeStat label="Sent" value={data.pipeline.notificationsSent} />
+        </div>
+        <p className="mt-3 text-sm text-neutral-300">{data.pipeline.explanation}</p>
+        {data.pipeline.crawls.failed > 0 && (
+          <p className="mt-1 text-[11px] text-amber-500/80">
+            {data.pipeline.crawls.failed} crawls failed
+            {data.pipeline.crawls.topFailures[0]
+              ? ` · ${data.pipeline.crawls.topFailures[0].reason}`
+              : ''}
+          </p>
+        )}
+      </section>
+
       {/* Today */}
       <section className="mt-8">
         <h2 className="text-sm font-medium uppercase tracking-wide text-neutral-400">
@@ -254,6 +298,25 @@ export default function MissionControl() {
         </div>
       </section>
     </Shell>
+  );
+}
+
+function PipeStat({
+  label,
+  value,
+  tone,
+}: {
+  label: string;
+  value: number;
+  tone?: 'good' | 'mid';
+}) {
+  const color =
+    tone === 'good' ? 'text-emerald-400' : tone === 'mid' ? 'text-amber-400' : 'text-neutral-100';
+  return (
+    <div className="rounded-lg bg-neutral-950/60 px-2 py-2 text-center">
+      <div className={`text-xl font-semibold tabular-nums ${color}`}>{value}</div>
+      <div className="text-[10px] uppercase tracking-wide text-neutral-500">{label}</div>
+    </div>
   );
 }
 

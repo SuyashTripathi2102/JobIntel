@@ -164,8 +164,20 @@ export class IngestService {
     let updated = 0;
     const newJobIds: string[] = [];
 
-    for (let i = 0; i < jobs.length; i += UPSERT_CHUNK) {
-      const chunk = jobs.slice(i, i + UPSERT_CHUNK);
+    // Dedupe by externalId within this crawl: Workable (and others) list the
+    // same shortcode twice for multi-location postings. Postgres ON CONFLICT
+    // can't update one row twice in a statement — an un-deduped batch fails
+    // ENTIRELY, silently dropping every job from that company (2026-07-09:
+    // 45 Workable crawls/day failing this way). Keep first occurrence.
+    const seen = new Set<string>();
+    const deduped = jobs.filter((j) => {
+      if (seen.has(j.externalId)) return false;
+      seen.add(j.externalId);
+      return true;
+    });
+
+    for (let i = 0; i < deduped.length; i += UPSERT_CHUNK) {
+      const chunk = deduped.slice(i, i + UPSERT_CHUNK);
 
       const ids = chunk.map(() => randomUUID());
       const externalIds = chunk.map((j) => j.externalId);

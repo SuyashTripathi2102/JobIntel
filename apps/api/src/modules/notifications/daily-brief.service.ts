@@ -24,6 +24,68 @@ export class DailyBriefService {
 
   private readonly dashboardUrl: string | null;
 
+  /**
+   * Midday CONSIDER digest (notification policy, 2026-07-09): APPLY jobs push
+   * immediately all day via the notification gate; good-but-not-perfect
+   * CONSIDER jobs (60–74, India, fresh, unnotified) would otherwise rot —
+   * batch them once at ~2 PM so nothing good is silently lost. Marks them
+   * notified so they don't repeat.
+   */
+  async sendConsiderDigest(): Promise<{ sent: number }> {
+    const users = await this.prisma.user.findMany({
+      where: {
+        resumes: { some: { isPrimary: true, versions: { some: { embedding: { isNot: null } } } } },
+      },
+      select: { id: true },
+    });
+
+    let sent = 0;
+    for (const user of users) {
+      const jobs = await this.prisma.$queryRaw<
+        { matchId: string; score: number; title: string; company: string; jobId: string }[]
+      >`
+        SELECT m.id AS "matchId", round(m."opportunityScore") AS score, j.title,
+               c.name AS company, j.id AS "jobId"
+        FROM job_matches m
+        JOIN jobs j ON j.id = m."jobId" AND j.status = 'ACTIVE'
+        JOIN companies c ON c.id = j."companyId"
+        WHERE m."userId" = ${user.id}
+          AND m."opportunityScore" >= 60 AND m."opportunityScore" < 75
+          AND m."notifiedAt" IS NULL
+          AND COALESCE(j."postedAt", j."firstSeenAt") >= now() - interval '30 days'
+          AND (j.country = 'IN' OR j.location ~* 'india|bengaluru|bangalore|mumbai|pune|delhi|hyderabad|chennai|noida|gurgaon|indore|ahmedabad')
+        ORDER BY m."opportunityScore" DESC
+        LIMIT 8
+      `;
+      if (jobs.length === 0) continue;
+
+      const lines = [
+        `🟡 <b>Midday digest — ${jobs.length} worth a look</b>`,
+        `Good matches that didn't quite hit "apply now" — your call:`,
+        ``,
+        ...jobs.map(
+          (j) => `• ${j.score} · <b>${escapeHtml(j.title)}</b> — ${escapeHtml(j.company)}`,
+        ),
+      ];
+      const buttons = this.dashboardUrl?.startsWith('http')
+        ? [[{ text: '📊 Open Mission Control', url: this.dashboardUrl }]]
+        : undefined;
+
+      if (this.telegram.isConfigured()) {
+        await this.telegram.send(lines.join('\n'), { buttons });
+      } else {
+        this.logger.log(`[consider-digest]\n${lines.join('\n').replace(/<[^>]+>/g, '')}`);
+      }
+      // Mark notified so the digest doesn't repeat them tomorrow.
+      await this.prisma.jobMatch.updateMany({
+        where: { id: { in: jobs.map((j) => j.matchId) } },
+        data: { notifiedAt: new Date() },
+      });
+      sent++;
+    }
+    return { sent };
+  }
+
   /** Compose + send the brief for every user with a parsed primary resume. */
   async sendAll(): Promise<{ sent: number }> {
     const users = await this.prisma.user.findMany({
