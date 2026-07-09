@@ -8,6 +8,7 @@ import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
 import { randomUUID } from 'crypto';
 import { PDFParse } from 'pdf-parse';
+import { checkAts } from './ats-check';
 import { StorageService } from '../storage/storage.service';
 import { ResumesRepository } from './resumes.repository';
 import { PARSE_RESUME_QUEUE } from './resumes.processor';
@@ -50,7 +51,16 @@ export class ResumesService {
     }
 
     // Extract before touching the DB — a bad PDF must not leave orphan rows.
-    const rawText = await this.extractText(file.buffer);
+    const { raw, clean: rawText } = await this.extractText(file.buffer);
+
+    // CareerOS has a vision fallback; no ATS does. Judge the file the way the
+    // market will, and tell the user before they apply with it.
+    const ats = checkAts(raw);
+    if (ats.verdict !== 'SAFE') {
+      this.logger.warn(
+        `ATS check ${ats.verdict} (${ats.score}/100, letters ${ats.letterRatio}) for user ${userId}`,
+      );
+    }
 
     let resume;
     let createdNew = false;
@@ -83,7 +93,7 @@ export class ResumesService {
         { jobId: `parse-${version.id}`, removeOnComplete: true, removeOnFail: true },
       );
 
-      return { resumeId: resume.id, version };
+      return { resumeId: resume.id, version, ats };
     } catch (err) {
       // Storage/DB failed after we created the resume shell — undo it.
       if (createdNew) await this.resumes.delete(resume.id).catch(() => undefined);
@@ -112,16 +122,22 @@ export class ResumesService {
     await this.resumes.delete(resume.id);
   }
 
-  private async extractText(buffer: Buffer): Promise<string> {
+  /**
+   * Returns both forms: `raw` is what an ATS would see, `clean` is what
+   * Postgres will accept. The ATS check must run on `raw` — stripping control
+   * characters is exactly what hides a broken text layer.
+   */
+  private async extractText(buffer: Buffer): Promise<{ raw: string; clean: string }> {
     const parser = new PDFParse({ data: new Uint8Array(buffer) });
     try {
       const result = await parser.getText();
-      const text = (result.text ?? '').replace(CONTROL_CHARS, '').trim();
-      if (!text) {
+      const raw = result.text ?? '';
+      const clean = raw.replace(CONTROL_CHARS, '').trim();
+      if (!clean) {
         // Scanned/image-only PDF — accept the file, flag for OCR later.
         this.logger.warn('PDF contained no extractable text (possibly scanned)');
       }
-      return text;
+      return { raw, clean };
     } catch {
       throw new BadRequestException('Could not read this PDF — is the file corrupted?');
     } finally {

@@ -56,3 +56,35 @@ export function apiPost<T>(path: string, body: unknown): Promise<T> {
 export function apiPatch<T>(path: string, body: unknown): Promise<T> {
   return apiRequest<T>('PATCH', path, body);
 }
+
+/** Multipart upload — never set content-type, the browser writes the boundary. */
+export async function apiUpload<T>(
+  path: string,
+  file: File,
+  fields: Record<string, string> = {},
+): Promise<T> {
+  const token = getToken();
+  if (!token) {
+    window.location.href = '/login';
+    throw new Error('Not authenticated');
+  }
+  const form = new FormData();
+  form.append('file', file);
+  for (const [k, v] of Object.entries(fields)) form.append(k, v);
+
+  const res = await fetch(`${BASE}${path}`, {
+    method: 'POST',
+    headers: { authorization: `Bearer ${token}` },
+    body: form,
+  });
+  if (res.status === 401) {
+    logout();
+    throw new Error('Session expired');
+  }
+  if (!res.ok) {
+    const detail: unknown = await res.json().catch(() => null);
+    const message = (detail as { message?: string } | null)?.message;
+    throw new Error(message ?? `API ${res.status}`);
+  }
+  return (await res.json()) as T;
+}
