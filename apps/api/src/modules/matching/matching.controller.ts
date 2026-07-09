@@ -32,6 +32,17 @@ export class MatchingInternalController {
   reconcileAll() {
     return this.matching.reconcileAll();
   }
+
+  /**
+   * Recompute opportunity score + canonical verdict for every existing match.
+   * No LLM: the resume scores are already stored. Used after a decision-logic
+   * change, so no match is left with a stale or missing verdict.
+   */
+  @Post('rescore')
+  @HttpCode(HttpStatus.OK)
+  rescoreAll() {
+    return this.matching.rescoreAllUsers();
+  }
 }
 
 @Controller('matches')

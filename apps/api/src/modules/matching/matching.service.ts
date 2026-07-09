@@ -195,6 +195,19 @@ export class MatchingService {
    * freshness decays, preferences change, company intel improves) and run
    * the notification gate over the results.
    */
+  /** Rescore every user — the post-deploy sweep after a decision-logic change. */
+  async rescoreAllUsers(): Promise<{ users: number; rescored: number; notified: number }> {
+    const users = await this.prisma.user.findMany({ select: { id: true } });
+    let rescored = 0;
+    let notified = 0;
+    for (const u of users) {
+      const r = await this.rescoreExisting(u.id);
+      rescored += r.rescored;
+      notified += r.notified;
+    }
+    return { users: users.length, rescored, notified };
+  }
+
   async rescoreExisting(userId: string): Promise<{ rescored: number; notified: number }> {
     // Only the active version's matches drive recommendations; older versions
     // are kept for outcome analytics and must never be re-scored or re-notified.
