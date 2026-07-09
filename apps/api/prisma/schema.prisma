@@ -406,8 +406,20 @@ model JobMatch {
   verdict         String? // APPLY | CONSIDER | SKIP | NEEDS_REVIEW
   verdictReason   String?
   verdictCode     String? // TARGET_ROLE_ELIGIBLE | DEVELOPMENT_WRONG_SPECIALIZATION | ...
-  /** Is this the kind of work I want? Reported separately from resume match. */
+  /** Legacy blended number; prefer the three below. */
   roleRelevance   Int?
+  // Four questions, four answers. Blending them is what recommended a
+  // digital-marketing role at 65% resume fit, and printed "100% relevant"
+  // beside a React Native job.
+  //   developmentConfidence — is hands-on software development core here?
+  //   targetRoleFit         — is this one of the role families I search for?
+  //   specializationFit     — is the JD's required stack my stack?
+  //   overallScore          — does my resume satisfy this specific JD?
+  developmentConfidence Int?
+  targetRoleFit         Int?
+  specializationFit     Int?
+  /** What the user should DO: APPLY_NOW | WORTH_APPLYING | REVIEW_FIRST | LOW_PRIORITY | SKIP */
+  actionRecommendation  String?
   decisionVersion Int?
   decidedAt       DateTime?
 

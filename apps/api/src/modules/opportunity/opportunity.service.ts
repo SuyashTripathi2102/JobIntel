@@ -4,6 +4,7 @@ import { createHash } from 'crypto';
 import { PrismaService } from '../../prisma/prisma.service';
 import { decide } from '../notifications/decision';
 import {
+  actionFor,
   DEFAULT_ROLE_PROFILE,
   eligibility,
   type Eligibility,
@@ -168,6 +169,19 @@ export class OpportunityService {
         // All reasons, newline-joined: consumers render them, none recompute them.
         verdictReason: decision.reasons.join('\n') || null,
         roleRelevance: elig?.roleRelevance ?? null,
+        developmentConfidence: elig?.developmentConfidence ?? null,
+        targetRoleFit: elig?.targetRoleFit ?? null,
+        specializationFit: elig?.specializationFit ?? null,
+        actionRecommendation: elig
+          ? actionFor({
+              verdict: decision.verdict,
+              targetRoleFit: elig.targetRoleFit,
+              specializationFit: elig.specializationFit,
+              resumeFit: match.overallScore,
+              fit: elig.fit,
+              capsAtConsider: elig.capsAtConsider,
+            })
+          : 'SKIP',
         decisionVersion: DECISION_VERSION,
         decidedAt: new Date(),
       },

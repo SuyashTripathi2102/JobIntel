@@ -1,4 +1,5 @@
 import {
+  actionFor,
   DEFAULT_ROLE_PROFILE,
   eligibility,
   experienceVerdict,
@@ -6,6 +7,7 @@ import {
   targetFit,
   type JobClassification,
   type RoleProfile,
+  type TargetFit,
 } from './role-classification';
 
 const SUYASH: RoleProfile = { ...DEFAULT_ROLE_PROFILE, yearsExperience: 2 };
@@ -413,6 +415,114 @@ describe('rejection reasons are never collapsed', () => {
     expect(e.reason).toBe(
       'Experience stretch: JD requests 3–6 years; your profile has approximately 2 years',
     );
+  });
+});
+
+describe('the four dimensions must not be blended', () => {
+  // Real production classifications, 2026-07-10.
+  const abhibus = classification({
+    roleFamily: 'FULL_STACK',
+    developmentConfidence: 100,
+    requiredSkills: ['React.js', 'Node.js', 'JavaScript', 'HTML5', 'CSS3', 'MySQL', 'MongoDB', 'Cassandra'],
+    minimumYears: 3,
+    maximumYears: 4,
+  });
+  const reactNative = classification({
+    roleFamily: 'SDE',
+    developmentConfidence: 100,
+    requiredSkills: ['React Native', 'JavaScript', 'TypeScript', 'ES6+', 'XCode', 'Gradle', 'REST APIs'],
+    minimumYears: 3,
+    maximumYears: 5,
+  });
+  const appliedAi = classification({
+    roleFamily: 'GENERAL_SOFTWARE_ENGINEERING',
+    developmentConfidence: 100,
+    requiredSkills: ['Python', 'LLMs', 'Anthropic', 'OpenAI'],
+    minimumYears: 1,
+    maximumYears: 4,
+  });
+
+  it('an exact Node.js + React role is target on every dimension', () => {
+    const e = eligibility(abhibus, SUYASH);
+    expect(e.fit).toBe('TARGET');
+    expect(e.targetRoleFit).toBe(100);
+    expect(e.specializationFit).toBeGreaterThanOrEqual(70);
+    expect(e.capsAtConsider).toBe(true); // 3y vs 2y
+  });
+
+  it('React Native is 100% software and NOT 100% my role', () => {
+    const e = eligibility(reactNative, SUYASH);
+    expect(e.developmentConfidence).toBe(100);
+    // "React Native" must not count as "React".
+    expect(e.specializationFit).toBeLessThanOrEqual(50);
+    // A neutrally-titled SDE role whose required stack is React Native is mobile.
+    expect(e.fit).toBe('ADJACENT');
+    expect(e.targetRoleFit).toBeLessThan(100);
+  });
+
+  it('an LLM engineering role is software, but not this stack', () => {
+    const e = eligibility(appliedAi, SUYASH);
+    expect(e.developmentConfidence).toBe(100);
+    expect(e.specializationFit).toBe(0);
+    expect(e.fit).toBe('ADJACENT');
+  });
+});
+
+describe('actionFor — what to DO, not what the system concluded', () => {
+  const base = { verdict: 'CONSIDER' as const, fit: 'TARGET' as TargetFit, capsAtConsider: true };
+
+  it('a one-year stretch on the exact role and stack is WORTH_APPLYING', () => {
+    expect(
+      actionFor({ ...base, targetRoleFit: 100, specializationFit: 88, resumeFit: 78 }),
+    ).toBe('WORTH_APPLYING');
+  });
+
+  it('an adjacent specialization is REVIEW_FIRST, not a silent skip', () => {
+    expect(
+      actionFor({ ...base, fit: 'ADJACENT', targetRoleFit: 71, specializationFit: 57, resumeFit: 55 }),
+    ).toBe('REVIEW_FIRST');
+  });
+
+  it('a foreign stack is LOW_PRIORITY however good the score', () => {
+    expect(
+      actionFor({ ...base, fit: 'ADJACENT', targetRoleFit: 65, specializationFit: 0, resumeFit: 65 }),
+    ).toBe('LOW_PRIORITY');
+  });
+
+  it('APPLY is APPLY_NOW; SKIP is SKIP; NEEDS_REVIEW is REVIEW_FIRST', () => {
+    const args = { targetRoleFit: 100, specializationFit: 90, resumeFit: 80, fit: 'TARGET' as TargetFit, capsAtConsider: false };
+    expect(actionFor({ ...args, verdict: 'APPLY' })).toBe('APPLY_NOW');
+    expect(actionFor({ ...args, verdict: 'SKIP' })).toBe('SKIP');
+    expect(actionFor({ ...args, verdict: 'NEEDS_REVIEW' })).toBe('REVIEW_FIRST');
+  });
+});
+
+describe('Needs Review holds genuine uncertainty, not obvious non-development', () => {
+  it('a zero-coding, zero-confidence AMBIGUOUS job is rejected, not queued', () => {
+    const e = eligibility(
+      classification({
+        primaryFunction: 'AMBIGUOUS',
+        roleFamily: 'AMBIGUOUS',
+        codingIntensity: 'NONE',
+        developmentConfidence: 0,
+      }),
+      SUYASH,
+    );
+    expect(e.needsReview).toBe(false);
+    expect(e.code).toBe('NOT_DEVELOPMENT');
+  });
+
+  it('an ambiguous job with some development signal still goes to review', () => {
+    const e = eligibility(
+      classification({
+        primaryFunction: 'AMBIGUOUS',
+        roleFamily: 'AMBIGUOUS',
+        codingIntensity: 'OCCASIONAL',
+        developmentConfidence: 45,
+      }),
+      SUYASH,
+    );
+    expect(e.needsReview).toBe(true);
   });
 });
 
