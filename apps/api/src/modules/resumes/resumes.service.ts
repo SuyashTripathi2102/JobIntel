@@ -1,19 +1,40 @@
 import {
   BadRequestException,
+  forwardRef,
+  Inject,
   Injectable,
   Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bullmq';
+import { Prisma } from '@prisma/client';
 import { Queue } from 'bullmq';
 import { randomUUID } from 'crypto';
 import { PDFParse } from 'pdf-parse';
 import { checkAts } from './ats-check';
+import { MatchingService } from '../matching/matching.service';
+import { PrismaService } from '../../prisma/prisma.service';
 import { StorageService } from '../storage/storage.service';
+import type { ParsedResume } from './resume-intelligence.service';
 import { ResumesRepository } from './resumes.repository';
 import { PARSE_RESUME_QUEUE } from './resumes.processor';
 
 const MAX_RESUMES_PER_USER = 10;
+
+/** What the user reviews and corrects before a resume starts matching jobs. */
+export interface ResumeProfile {
+  fullName: string | null;
+  email: string | null;
+  phone: string | null;
+  headline: string | null;
+  totalYearsExperience: number | null;
+  targetRoles: string[];
+  skills: string[];
+  experience: ParsedResume['experience'];
+  projects: ParsedResume['projects'];
+  education: ParsedResume['education'];
+  summaryForMatching: string;
+}
 
 // PDFs frequently embed NUL and other control characters, which Postgres
 // JSONB rejects ("unsupported Unicode escape sequence"). Strip everything in
@@ -27,6 +48,9 @@ export class ResumesService {
   constructor(
     private readonly resumes: ResumesRepository,
     private readonly storage: StorageService,
+    private readonly prisma: PrismaService,
+    // Circular: MatchingModule → NotificationsModule → ResumesModule.
+    @Inject(forwardRef(() => MatchingService)) private readonly matching: MatchingService,
     @InjectQueue(PARSE_RESUME_QUEUE) private readonly parseQueue: Queue,
   ) {}
 
@@ -86,6 +110,13 @@ export class ResumesService {
         extractedAt: new Date().toISOString(),
       });
 
+      // ATS provenance travels with the version, so resume-performance
+      // analytics can later ask "did the readable one get more interviews?".
+      await this.prisma.resumeVersion.update({
+        where: { id: version.id },
+        data: { atsScore: ats.score, atsVerdict: ats.verdict },
+      });
+
       // Kick off AI parsing (structured extraction + skills + embedding).
       await this.parseQueue.add(
         'parse',
@@ -99,6 +130,116 @@ export class ResumesService {
       if (createdNew) await this.resumes.delete(resume.id).catch(() => undefined);
       throw err;
     }
+  }
+
+  /**
+   * The profile the user reviews before activation. Contact details are pulled
+   * from the raw text rather than the LLM: they are exact strings, and an
+   * invented phone number is worse than a missing one.
+   */
+  async profile(userId: string, resumeVersionId: string): Promise<ResumeProfile> {
+    const version = await this.ownedVersion(userId, resumeVersionId);
+    const parsedJson = version.parsedJson as {
+      rawText?: string;
+      structured?: ParsedResume;
+    } | null;
+    const structured = parsedJson?.structured;
+    if (!structured) {
+      throw new BadRequestException('This version has not been parsed yet');
+    }
+    const confirmed = version.confirmedProfile as ResumeProfile | null;
+    if (confirmed) return confirmed;
+
+    const raw = parsedJson?.rawText ?? '';
+    return {
+      fullName: structured.fullName,
+      email: raw.match(/[\w.+-]+@[\w-]+\.[\w.]+/)?.[0] ?? null,
+      phone: raw.match(/\+?\d[\d\s()-]{8,14}\d/)?.[0]?.trim() ?? null,
+      headline: structured.headline,
+      totalYearsExperience: structured.totalYearsExperience,
+      // Seeded from real titles the resume contains; the user edits from there.
+      targetRoles: [
+        ...new Set([structured.headline, ...structured.experience.map((e) => e.title)]),
+      ].filter((r): r is string => !!r),
+      skills: structured.skills.map((s) => s.name),
+      experience: structured.experience,
+      projects: structured.projects,
+      education: structured.education,
+      summaryForMatching: structured.summaryForMatching,
+    };
+  }
+
+  /**
+   * Save the user's corrections. Skills absent from the resume text are warned
+   * about, never blocked — AI extraction misses real information, and the user
+   * is the authority on their own history.
+   */
+  async saveProfile(userId: string, resumeVersionId: string, profile: ResumeProfile) {
+    const version = await this.ownedVersion(userId, resumeVersionId);
+    const raw = (
+      (version.parsedJson as { rawText?: string } | null)?.rawText ?? ''
+    ).toLowerCase();
+
+    const unsupportedSkills = profile.skills.filter((s) => !raw.includes(s.toLowerCase()));
+
+    await this.prisma.resumeVersion.update({
+      where: { id: version.id },
+      data: { confirmedProfile: profile as unknown as Prisma.InputJsonValue },
+    });
+
+    return {
+      saved: true,
+      warnings: unsupportedSkills.length
+        ? [
+            `${unsupportedSkills.join(', ')} ${unsupportedSkills.length === 1 ? 'does' : 'do'} not appear in the resume text. Recruiters search the document, not this profile — add it to the PDF too, and only if you can defend it in an interview.`,
+          ]
+        : [],
+      unsupportedSkills,
+    };
+  }
+
+  /**
+   * Activate a reviewed version, then re-evaluate every actionable job against
+   * it. This is the ONLY path that starts matching — parsing deliberately does
+   * not, so an unreviewed AI extraction can never drive recommendations.
+   */
+  async activate(userId: string, resumeVersionId: string) {
+    const version = await this.ownedVersion(userId, resumeVersionId);
+    if (!version.confirmedProfile) {
+      throw new BadRequestException('Review and confirm the parsed profile before activating');
+    }
+    await this.prisma.resumeVersion.update({
+      where: { id: version.id },
+      data: { activatedAt: new Date(), reconciledAt: null, reconcileReport: Prisma.DbNull },
+    });
+    this.logger.log(`Activated resume version ${version.id} for user ${userId}`);
+
+    // Re-scoring every actionable job is ~300 paced LLM calls — minutes, not
+    // milliseconds. Enqueue it; the report lands on the version when it lands.
+    await this.parseQueue.add(
+      'reconcile',
+      { resumeVersionId: version.id, userId },
+      { jobId: `reconcile-${version.id}-${Date.now()}`, removeOnComplete: true, removeOnFail: false },
+    );
+    return { activated: true, reconciliationQueued: true };
+  }
+
+  /** The stored before/after report, once background reconciliation finishes. */
+  async reconcileReport(userId: string, resumeVersionId: string) {
+    const version = await this.ownedVersion(userId, resumeVersionId);
+    return {
+      status: version.reconciledAt ? 'complete' : version.activatedAt ? 'running' : 'not-activated',
+      reconciledAt: version.reconciledAt,
+      report: version.reconcileReport,
+    };
+  }
+
+  private async ownedVersion(userId: string, resumeVersionId: string) {
+    const version = await this.prisma.resumeVersion.findFirst({
+      where: { id: resumeVersionId, resume: { userId } },
+    });
+    if (!version) throw new NotFoundException('Resume version not found');
+    return version;
   }
 
   async enqueueParse(userId: string, resumeVersionId: string) {

@@ -25,6 +25,64 @@ interface JobScore {
   reasoning: string;
 }
 
+export type Verdict = 'APPLY' | 'CONSIDER' | 'SKIP';
+
+export function verdictOf(opportunityScore: number): Verdict {
+  return opportunityScore >= 75 ? 'APPLY' : opportunityScore >= 60 ? 'CONSIDER' : 'SKIP';
+}
+
+export interface ScoreChange {
+  jobId: string;
+  title: string;
+  company: string;
+  oldScore: number;
+  newScore: number;
+  oldVerdict: Verdict | null;
+  newVerdict: Verdict;
+}
+
+/** What changed when a resume version was activated — the answer to "did it help?" */
+export interface ReconcileReport {
+  inspected: number;
+  created: number;
+  /** Jobs with no score under any earlier resume version. */
+  newlyEvaluated: number;
+  unchanged: number;
+  increased: number;
+  decreased: number;
+  averageScoreChange: number;
+  apply: number;
+  consider: number;
+  skip: number;
+  upgradedToApply: number;
+  downgraded: number;
+  notified: number;
+  duplicateNotificationsPrevented: number;
+  failures: number;
+  topChanges: ScoreChange[];
+}
+
+function emptyReconcileReport(): ReconcileReport {
+  return {
+    inspected: 0,
+    created: 0,
+    newlyEvaluated: 0,
+    unchanged: 0,
+    increased: 0,
+    decreased: 0,
+    averageScoreChange: 0,
+    apply: 0,
+    consider: 0,
+    skip: 0,
+    upgradedToApply: 0,
+    downgraded: 0,
+    notified: 0,
+    duplicateNotificationsPrevented: 0,
+    failures: 0,
+    topChanges: [],
+  };
+}
+
 @Injectable()
 export class MatchingService {
   private readonly logger = new Logger(MatchingService.name);
@@ -131,8 +189,12 @@ export class MatchingService {
    * the notification gate over the results.
    */
   async rescoreExisting(userId: string): Promise<{ rescored: number; notified: number }> {
+    // Only the active version's matches drive recommendations; older versions
+    // are kept for outcome analytics and must never be re-scored or re-notified.
+    const activeVersionId = await this.activeResumeVersionId(userId);
+    if (!activeVersionId) return { rescored: 0, notified: 0 };
     const matches = await this.prisma.jobMatch.findMany({
-      where: { userId, job: { status: 'ACTIVE' } },
+      where: { userId, resumeVersionId: activeVersionId, job: { status: 'ACTIVE' } },
       select: { id: true },
     });
     let notified = 0;
@@ -160,7 +222,7 @@ export class MatchingService {
         return null;
       });
       if (r) {
-        scored += r.scored;
+        scored += r.created;
         apply += r.apply;
       }
     }
@@ -178,17 +240,7 @@ export class MatchingService {
    * spam — only fresh APPLY verdicts notify immediately; CONSIDER jobs land in
    * the DB unnotified so the 2 PM digest picks them up.
    */
-  async reconcileForUser(
-    userId: string,
-    cap = 60,
-  ): Promise<{
-    unmatchedFound: number;
-    scored: number;
-    apply: number;
-    consider: number;
-    skip: number;
-    notified: number;
-  }> {
+  async reconcileForUser(userId: string, cap = 60): Promise<ReconcileReport> {
     const resume = await this.getPrimaryResumeContext(userId);
     const countries = await this.preferredCountries(userId);
 
@@ -196,6 +248,11 @@ export class MatchingService {
     // days). 51% of the India pool is 90d+ zombie listings — ranking purely by
     // similarity burned LLM budget on ghosts while leaving fresh jobs unscored
     // (2026-07-09 audit). Coverage that matters = eligible ACTIONABLE jobs.
+    //
+    // NOT EXISTS is keyed on the resume version, so re-running for the same
+    // version is idempotent while a NEW version re-evaluates everything. Keyed
+    // on (jobId, userId) alone — as it was until 2026-07-09 — a corrected
+    // resume re-scored nothing, because every actionable job already had a row.
     const candidates = await this.prisma.$queryRaw<
       { id: string; title: string; description: string }[]
     >`
@@ -205,40 +262,143 @@ export class MatchingService {
       CROSS JOIN (SELECT vector FROM resume_embeddings WHERE "resumeVersionId" = ${resume.resumeVersionId}) re
       WHERE ${countrySql(countries)}
         AND now()::date - COALESCE(j."postedAt", j."firstSeenAt")::date <= ${RECONCILE_MAX_AGE_DAYS}
-        AND NOT EXISTS (SELECT 1 FROM job_matches m WHERE m."jobId" = j.id AND m."userId" = ${userId})
+        AND NOT EXISTS (
+          SELECT 1 FROM job_matches m
+          WHERE m."jobId" = j.id AND m."userId" = ${userId}
+            AND m."resumeVersionId" = ${resume.resumeVersionId}
+        )
       ORDER BY je.vector <=> re.vector
       LIMIT ${cap}
     `;
 
-    if (candidates.length === 0) {
-      return { unmatchedFound: 0, scored: 0, apply: 0, consider: 0, skip: 0, notified: 0 };
-    }
+    if (candidates.length === 0) return emptyReconcileReport();
+
+    // Baseline from the previous resume version, so we can report the delta
+    // rather than just "60 scored".
+    const previous = await this.previousScores(
+      userId,
+      resume.resumeVersionId,
+      candidates.map((c) => c.id),
+    );
 
     const matchIds = await this.scoreAndUpsert(userId, resume, candidates);
 
-    let apply = 0;
-    let consider = 0;
-    let skip = 0;
-    let notified = 0;
+    const report = emptyReconcileReport();
+    report.inspected = candidates.length;
+    report.created = matchIds.length;
+    const deltas: number[] = [];
+
     for (const id of matchIds) {
-      const result = await this.opportunity.scoreMatch(id);
+      let result;
+      try {
+        result = await this.opportunity.scoreMatch(id);
+      } catch (err) {
+        report.failures++;
+        this.logger.error(
+          `reconcile scoreMatch ${id} failed: ${err instanceof Error ? err.message : err}`,
+        );
+        continue;
+      }
       const score = result?.opportunityScore ?? 0;
-      if (score >= 75) {
-        apply++;
-        // Only exceptional, never-seen APPLY jobs interrupt — the gate still
-        // applies its own SKIP/geo/stale/memory checks.
-        if (await this.notifications.maybeNotifyMatch(id)) notified++;
-      } else if (score >= 60) {
-        consider++; // left unnotified — the 2 PM digest delivers these
+      const match = await this.prisma.jobMatch.findUnique({
+        where: { id },
+        select: { jobId: true, job: { select: { title: true, company: { select: { name: true } } } } },
+      });
+      if (!match) continue;
+
+      const before = previous.get(match.jobId) ?? null;
+      const verdictNow = verdictOf(score);
+      const verdictBefore = before === null ? null : verdictOf(before);
+
+      if (before === null) {
+        report.newlyEvaluated++;
       } else {
-        skip++;
+        const delta = score - before;
+        deltas.push(delta);
+        if (Math.abs(delta) < 1) report.unchanged++;
+        else if (delta > 0) report.increased++;
+        else report.decreased++;
+        if (verdictBefore !== verdictNow) {
+          report.topChanges.push({
+            jobId: match.jobId,
+            title: match.job.title,
+            company: match.job.company.name,
+            oldScore: Math.round(before),
+            newScore: Math.round(score),
+            oldVerdict: verdictBefore,
+            newVerdict: verdictNow,
+          });
+          if (verdictNow === 'APPLY') report.upgradedToApply++;
+          else if (verdictBefore === 'APPLY') report.downgraded++;
+        }
+      }
+
+      if (verdictNow === 'APPLY') report.apply++;
+      else if (verdictNow === 'CONSIDER') report.consider++;
+      else report.skip++;
+
+      // A new resume version must not re-announce jobs you have already seen.
+      // Interrupt only for a genuinely new APPLY, or a material upgrade into
+      // APPLY. Everything else lands in the resume-update summary.
+      const seenBefore = await this.jobEverNotified(userId, match.jobId);
+      const materialUpgrade =
+        verdictNow === 'APPLY' && verdictBefore !== null && verdictBefore !== 'APPLY';
+
+      if (verdictNow === 'APPLY' && (!seenBefore || materialUpgrade)) {
+        if (await this.notifications.maybeNotifyMatch(id)) report.notified++;
+      } else if (verdictNow === 'APPLY' && seenBefore) {
+        report.duplicateNotificationsPrevented++;
       }
     }
 
-    this.logger.log(
-      `Reconcile ${userId}: ${candidates.length} unmatched -> ${apply} APPLY (${notified} notified), ${consider} CONSIDER (for digest), ${skip} SKIP`,
+    report.averageScoreChange = deltas.length
+      ? Number((deltas.reduce((a, b) => a + b, 0) / deltas.length).toFixed(1))
+      : 0;
+    report.topChanges.sort(
+      (a, b) => Math.abs(b.newScore - b.oldScore) - Math.abs(a.newScore - a.oldScore),
     );
-    return { unmatchedFound: candidates.length, scored: matchIds.length, apply, consider, skip, notified };
+    report.topChanges = report.topChanges.slice(0, 10);
+
+    this.logger.log(
+      `Reconcile ${userId} v=${resume.resumeVersionId}: ${report.inspected} inspected, ` +
+        `${report.increased}↑ ${report.decreased}↓ ${report.unchanged}= avg ${report.averageScoreChange}, ` +
+        `${report.apply} APPLY (${report.notified} notified, ${report.duplicateNotificationsPrevented} suppressed), ` +
+        `${report.consider} CONSIDER, ${report.failures} failed`,
+    );
+    return report;
+  }
+
+  /** Scores these jobs received under the user's previous resume version. */
+  private async previousScores(
+    userId: string,
+    currentVersionId: string,
+    jobIds: string[],
+  ): Promise<Map<string, number>> {
+    if (jobIds.length === 0) return new Map();
+    const rows = await this.prisma.jobMatch.findMany({
+      where: {
+        userId,
+        jobId: { in: jobIds },
+        resumeVersionId: { not: currentVersionId },
+        opportunityScore: { not: null },
+      },
+      orderBy: { createdAt: 'desc' },
+      select: { jobId: true, opportunityScore: true },
+    });
+    const out = new Map<string, number>();
+    for (const r of rows) {
+      // findMany is newest-first, so the first row per job is the latest prior score.
+      if (!out.has(r.jobId) && r.opportunityScore !== null) out.set(r.jobId, r.opportunityScore);
+    }
+    return out;
+  }
+
+  /** Notification memory spans resume versions — notifiedAt lives per match row. */
+  private async jobEverNotified(userId: string, jobId: string): Promise<boolean> {
+    const n = await this.prisma.jobMatch.count({
+      where: { userId, jobId, notifiedAt: { not: null } },
+    });
+    return n > 0;
   }
 
   /**
@@ -256,8 +416,10 @@ export class MatchingService {
     });
     if (!job) throw new BadRequestException('Unknown job');
 
-    const match = await this.prisma.jobMatch.findUnique({
-      where: { userId_jobId: { userId, jobId } },
+    const activeVersionId = await this.activeResumeVersionId(userId);
+    const match = await this.prisma.jobMatch.findFirst({
+      where: { userId, jobId, ...(activeVersionId ? { resumeVersionId: activeVersionId } : {}) },
+      orderBy: { createdAt: 'desc' },
     });
 
     const verdict = (reason: string, detail: Record<string, unknown> = {}) => ({
@@ -330,7 +492,15 @@ export class MatchingService {
       const scores = await this.scoreBatch(resume.parsed, batch);
       for (const s of scores) {
         const row = await this.prisma.jobMatch.upsert({
-          where: { userId_jobId: { userId, jobId: s.jobId } },
+          // Keyed on the resume version: re-running for the same version is
+          // idempotent, a new version writes a new row beside the old one.
+          where: {
+            userId_jobId_resumeVersionId: {
+              userId,
+              jobId: s.jobId,
+              resumeVersionId: resume.resumeVersionId,
+            },
+          },
           create: {
             userId,
             jobId: s.jobId,
@@ -357,9 +527,16 @@ export class MatchingService {
     return matchIds;
   }
 
-  list(userId: string, minScore = 0) {
+  async list(userId: string, minScore = 0) {
+    const activeVersionId = await this.activeResumeVersionId(userId);
+    if (!activeVersionId) return [];
     return this.prisma.jobMatch.findMany({
-      where: { userId, overallScore: { gte: minScore }, job: { status: 'ACTIVE' } },
+      where: {
+        userId,
+        resumeVersionId: activeVersionId,
+        overallScore: { gte: minScore },
+        job: { status: 'ACTIVE' },
+      },
       orderBy: { overallScore: 'desc' },
       include: {
         job: {
@@ -380,16 +557,36 @@ export class MatchingService {
     });
   }
 
+  /**
+   * The resume version matching runs against: the newest ACTIVATED version of
+   * the primary resume. Never merely the newest upload — an unreviewed parse
+   * must not start scoring jobs before the user has confirmed it.
+   */
+  async activeResumeVersionId(userId: string): Promise<string | null> {
+    const v = await this.prisma.resumeVersion.findFirst({
+      where: { resume: { userId, isPrimary: true }, activatedAt: { not: null } },
+      orderBy: { versionNumber: 'desc' },
+      select: { id: true },
+    });
+    return v?.id ?? null;
+  }
+
   private async getPrimaryResumeContext(userId: string) {
     const version = await this.prisma.resumeVersion.findFirst({
-      where: { resume: { userId, isPrimary: true } },
+      where: { resume: { userId, isPrimary: true }, activatedAt: { not: null } },
       orderBy: { versionNumber: 'desc' },
       include: { embedding: { select: { id: true } } },
     });
     if (!version) {
-      throw new BadRequestException('Upload a resume first (and mark one primary)');
+      throw new BadRequestException(
+        'No activated resume — upload one, review the parsed profile, then activate it',
+      );
     }
-    const structured = (version.parsedJson as { structured?: ParsedResume } | null)?.structured;
+    // The user's confirmed corrections outrank the AI parse. Every skill the
+    // old profile claimed came from a vision read of a broken PDF.
+    const structured =
+      (version.confirmedProfile as ParsedResume | null) ??
+      (version.parsedJson as { structured?: ParsedResume } | null)?.structured;
     if (!structured || !version.embedding) {
       throw new BadRequestException(
         'Primary resume is not parsed yet — run POST /resumes/versions/:id/parse first',

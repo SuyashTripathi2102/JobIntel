@@ -34,10 +34,12 @@ export class ApplicationsService {
     });
     if (existing) return this.transition(userId, existing.id, status, opts.note);
 
-    // Which resume version applied — the outcome-learning foundation.
-    const primary = await this.prisma.resume.findFirst({
-      where: { userId, isPrimary: true },
-      select: { versions: { orderBy: { versionNumber: 'desc' }, take: 1, select: { id: true } } },
+    // Which resume version applied — the outcome-learning foundation. Must be
+    // the ACTIVATED version: an uploaded-but-unconfirmed draft never went out.
+    const primary = await this.prisma.resumeVersion.findFirst({
+      where: { resume: { userId, isPrimary: true }, activatedAt: { not: null } },
+      orderBy: { versionNumber: 'desc' },
+      select: { id: true },
     });
 
     return this.prisma.application.create({
@@ -47,7 +49,7 @@ export class ApplicationsService {
         status,
         notes: opts.note,
         appliedAt: status === ApplicationStatus.APPLIED ? new Date() : null,
-        resumeVersionId: primary?.versions[0]?.id,
+        resumeVersionId: primary?.id,
         source: opts.source ?? 'careeros-match',
         events: { create: { toStatus: status, note: opts.note } },
       },

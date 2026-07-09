@@ -6,6 +6,9 @@ import { jobMatchesCountries, locationTags } from '../matching/location-filter';
 import { companyTier, isEvergreen } from '../opportunity/company-tier';
 import type { ScoreModule } from '../opportunity/opportunity.service';
 import { InlineButton, TelegramChannel } from './channels';
+
+// Telegram caps a message at 4096 characters; the rest of the card needs room.
+const REASONING_MAX_CHARS = 2500;
 import { decide, Decision, freshnessLine, salaryLine } from './decision';
 
 const RENOTIFY_SCORE_DELTA = 5; // re-notify only if the opportunity improved this much
@@ -223,9 +226,12 @@ export class NotificationsService {
     for (const reason of decision.reasons) lines.push(`• ${escapeHtml(reason)}`);
 
     if (match.reasoning) {
-      // Full reasoning — the "why" is the product; Telegram allows 4096 chars,
-      // so cap only defensively, never mid-thought (2026-07-09 feedback).
-      lines.push(``, `<i>${escapeHtml(truncate(match.reasoning, 1500))}</i>`);
+      // Full reasoning — the "why" is the product. Telegram allows 4096 chars,
+      // so cap defensively and only ever at a sentence boundary: a hard cut
+      // mid-sentence ("whereas you only…") is worse than saying less.
+      const { text, truncated } = truncateAtSentence(match.reasoning, REASONING_MAX_CHARS);
+      lines.push(``, `<i>${escapeHtml(text)}</i>`);
+      if (truncated) lines.push(`<i>Full analysis on the dashboard →</i>`);
     }
 
     if (twinCount > 1) {
@@ -324,6 +330,38 @@ function escapeHtml(s: string): string {
 
 function truncate(s: string, max: number): string {
   return s.length <= max ? s : `${s.slice(0, max - 1).trimEnd()}…`;
+}
+
+/**
+ * Cut long reasoning at the last complete sentence inside `max`. Falls back to
+ * a word boundary only when the text has no sentence break at all — never
+ * mid-word, and never mid-sentence.
+ */
+export function truncateAtSentence(
+  s: string,
+  max: number,
+): { text: string; truncated: boolean } {
+  const trimmed = s.trim();
+  if (trimmed.length <= max) return { text: trimmed, truncated: false };
+
+  const slice = trimmed.slice(0, max);
+  // Refuse any boundary so early it would throw away most of the explanation —
+  // a four-character "Ok.…" is not a summary.
+  const floor = max * 0.4;
+
+  const sentence = Math.max(
+    slice.lastIndexOf('. '),
+    slice.lastIndexOf('.\n'),
+    slice.lastIndexOf('! '),
+    slice.lastIndexOf('? '),
+  );
+  if (sentence > floor) return { text: slice.slice(0, sentence + 1), truncated: true };
+
+  const word = slice.lastIndexOf(' ');
+  if (word > floor) return { text: `${slice.slice(0, word).trimEnd()}…`, truncated: true };
+
+  // A single unbroken run of text: cut it and say so.
+  return { text: `${slice.slice(0, max - 1).trimEnd()}…`, truncated: true };
 }
 
 /** Public board roots per ATS — official landing pages for a company's jobs. */

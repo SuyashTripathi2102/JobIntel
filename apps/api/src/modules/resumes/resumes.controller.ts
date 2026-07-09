@@ -9,6 +9,7 @@ import {
   ParseFilePipe,
   MaxFileSizeValidator,
   Post,
+  Put,
   UploadedFile,
   UseInterceptors,
 } from '@nestjs/common';
@@ -16,6 +17,7 @@ import { FileInterceptor } from '@nestjs/platform-express';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import type { AuthenticatedUser } from '../../common/types/authenticated-user';
 import { UploadResumeDto } from './dto/upload-resume.dto';
+import type { ResumeProfile } from './resumes.service';
 import { ResumesService } from './resumes.service';
 
 const MAX_PDF_BYTES = 5 * 1024 * 1024; // 5 MB
@@ -60,5 +62,36 @@ export class ResumesController {
   @HttpCode(HttpStatus.ACCEPTED)
   reparse(@CurrentUser() user: AuthenticatedUser, @Param('versionId') versionId: string) {
     return this.resumesService.enqueueParse(user.id, versionId);
+  }
+
+  /** The parsed profile, for review before it is allowed to match jobs. */
+  @Get('versions/:versionId/profile')
+  profile(@CurrentUser() user: AuthenticatedUser, @Param('versionId') versionId: string) {
+    return this.resumesService.profile(user.id, versionId);
+  }
+
+  /** Save corrections. Warns about skills absent from the resume, never blocks. */
+  @Put('versions/:versionId/profile')
+  saveProfile(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('versionId') versionId: string,
+    @Body() profile: ResumeProfile,
+  ) {
+    return this.resumesService.saveProfile(user.id, versionId, profile);
+  }
+
+  /**
+   * Activate a reviewed version and re-evaluate every actionable job against
+   * it. The only path that starts matching — parsing deliberately does not.
+   */
+  @Post('versions/:versionId/activate')
+  activate(@CurrentUser() user: AuthenticatedUser, @Param('versionId') versionId: string) {
+    return this.resumesService.activate(user.id, versionId);
+  }
+
+  /** Before/after score changes from the activation reconcile. */
+  @Get('versions/:versionId/reconcile')
+  reconcileReport(@CurrentUser() user: AuthenticatedUser, @Param('versionId') versionId: string) {
+    return this.resumesService.reconcileReport(user.id, versionId);
   }
 }

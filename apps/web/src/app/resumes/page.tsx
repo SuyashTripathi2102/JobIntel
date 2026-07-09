@@ -21,6 +21,9 @@ interface AtsReport {
 interface ResumeVersion {
   id: string;
   createdAt: string;
+  activatedAt: string | null;
+  atsScore: number | null;
+  atsVerdict: 'SAFE' | 'RISKY' | 'UNREADABLE' | null;
 }
 
 interface Resume {
@@ -158,19 +161,44 @@ export default function Resumes() {
               r.versions.map((v, i) => (
                 <li
                   key={v.id}
-                  className="flex items-baseline justify-between rounded-lg border border-neutral-800 bg-neutral-900 px-4 py-3 text-sm"
+                  className="flex items-center justify-between gap-3 rounded-lg border border-neutral-800 bg-neutral-900 px-4 py-3 text-sm"
                 >
-                  <span className="text-neutral-200">
-                    {r.title}
-                    {r.isPrimary && (
-                      <span className="ml-2 rounded bg-emerald-950 px-1.5 py-0.5 text-[10px] uppercase text-emerald-400">
-                        primary
+                  <div className="min-w-0">
+                    <div className="truncate text-neutral-200">
+                      {r.title}
+                      <span className="ml-2 text-neutral-500">
+                        v{r.versions.length - i} · {new Date(v.createdAt).toLocaleDateString('en-IN')}
                       </span>
-                    )}
-                  </span>
-                  <span className="text-neutral-500">
-                    v{r.versions.length - i} · {new Date(v.createdAt).toLocaleDateString('en-IN')}
-                  </span>
+                    </div>
+                    <div className="mt-0.5 flex items-center gap-2 text-[11px]">
+                      {v.atsVerdict && (
+                        <span
+                          className={
+                            v.atsVerdict === 'SAFE'
+                              ? 'text-emerald-400'
+                              : v.atsVerdict === 'RISKY'
+                                ? 'text-amber-400'
+                                : 'text-red-400'
+                          }
+                        >
+                          ATS {v.atsScore}/100 {v.atsVerdict}
+                        </span>
+                      )}
+                      <span className={v.activatedAt ? 'text-emerald-400' : 'text-amber-400'}>
+                        {v.activatedAt ? 'active — matching jobs' : 'not reviewed — not matching yet'}
+                      </span>
+                    </div>
+                  </div>
+                  <a
+                    href={`/resumes/${v.id}`}
+                    className={`shrink-0 rounded-lg px-3 py-1.5 text-xs font-medium ${
+                      v.activatedAt
+                        ? 'border border-neutral-700 text-neutral-300 hover:border-neutral-500'
+                        : 'bg-neutral-100 text-neutral-950 hover:bg-white'
+                    }`}
+                  >
+                    {v.activatedAt ? 'Review' : 'Review & activate'}
+                  </a>
                 </li>
               )),
             )}

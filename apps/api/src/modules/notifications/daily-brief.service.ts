@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../../prisma/prisma.service';
+import { activeVersionSql } from '../matching/active-resume.sql';
 import { locationTags } from '../matching/location-filter';
 import { TelegramChannel } from './channels';
 
@@ -50,6 +51,7 @@ export class DailyBriefService {
         JOIN jobs j ON j.id = m."jobId" AND j.status = 'ACTIVE'
         JOIN companies c ON c.id = j."companyId"
         WHERE m."userId" = ${user.id}
+          AND m."resumeVersionId" = ${activeVersionSql(user.id)}
           AND m."opportunityScore" >= 60 AND m."opportunityScore" < 75
           AND m."notifiedAt" IS NULL
           AND COALESCE(j."postedAt", j."firstSeenAt") >= now() - interval '30 days'
@@ -122,6 +124,9 @@ export class DailyBriefService {
   async data(userId: string) {
     const dayAgo = new Date(Date.now() - 24 * 3_600_000);
     const weekAgo = new Date(Date.now() - 7 * 86_400_000);
+    // Matches from superseded resume versions stay in the table for outcome
+    // analytics; nothing user-facing may read them.
+    const activeVersionId = await this.activeVersionId(userId);
 
     const [newJobs24h, indiaNew24h, recommended24h, mustApply, worthALook, trending, skills] =
       await Promise.all([
@@ -132,7 +137,12 @@ export class DailyBriefService {
             AND (j.country = 'IN' OR j.location ~* 'india|bengaluru|bangalore|mumbai|pune|delhi|hyderabad|chennai|noida|gurgaon|gurugram|indore|kolkata')
         `,
         this.prisma.jobMatch.count({
-          where: { userId, createdAt: { gte: dayAgo }, opportunityScore: { gte: 60 } },
+          where: {
+            userId,
+            resumeVersionId: activeVersionId ?? '',
+            createdAt: { gte: dayAgo },
+            opportunityScore: { gte: 60 },
+          },
         }),
         this.prisma.$queryRaw<
           { jobId: string; score: number; title: string; company: string; location: string | null; workMode: string | null; url: string }[]
@@ -142,7 +152,9 @@ export class DailyBriefService {
           FROM job_matches m
           JOIN jobs j ON j.id = m."jobId" AND j.status = 'ACTIVE'
           JOIN companies c ON c.id = j."companyId"
-          WHERE m."userId" = ${userId} AND m."opportunityScore" >= 75
+          WHERE m."userId" = ${userId}
+            AND m."resumeVersionId" = ${activeVersionSql(userId)}
+            AND m."opportunityScore" >= 75
             AND COALESCE(j."postedAt", j."firstSeenAt") >= ${weekAgo}
           ORDER BY m."opportunityScore" DESC LIMIT 3
         `,
@@ -155,6 +167,7 @@ export class DailyBriefService {
           JOIN jobs j ON j.id = m."jobId" AND j.status = 'ACTIVE'
           JOIN companies c ON c.id = j."companyId"
           WHERE m."userId" = ${userId}
+            AND m."resumeVersionId" = ${activeVersionSql(userId)}
             AND m."opportunityScore" >= 60 AND m."opportunityScore" < 75
             AND COALESCE(j."postedAt", j."firstSeenAt") >= ${new Date(Date.now() - 30 * 86_400_000)}
           ORDER BY m."opportunityScore" DESC LIMIT 3
@@ -168,7 +181,9 @@ export class DailyBriefService {
         this.prisma.$queryRaw<{ skill: string; n: bigint }[]>`
           SELECT skill, count(*) AS n
           FROM job_matches m, unnest(m."missingSkills") AS skill
-          WHERE m."userId" = ${userId} AND m."createdAt" >= ${weekAgo}
+          WHERE m."userId" = ${userId}
+            AND m."resumeVersionId" = ${activeVersionSql(userId)}
+            AND m."createdAt" >= ${weekAgo}
           GROUP BY skill ORDER BY n DESC LIMIT 3
         `,
       ]);
@@ -270,6 +285,16 @@ export class DailyBriefService {
     }
 
     return lines.join('\n');
+  }
+
+  /** Newest activated version of the primary resume; '' when none is active. */
+  private async activeVersionId(userId: string): Promise<string> {
+    const v = await this.prisma.resumeVersion.findFirst({
+      where: { resume: { userId, isPrimary: true }, activatedAt: { not: null } },
+      orderBy: { versionNumber: 'desc' },
+      select: { id: true },
+    });
+    return v?.id ?? '';
   }
 }
 

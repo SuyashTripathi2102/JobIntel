@@ -8,10 +8,27 @@ export type ResumeWithVersions = Prisma.ResumeGetPayload<{ include: { versions: 
 export class ResumesRepository {
   constructor(private readonly prisma: PrismaService) {}
 
-  findAllForUser(userId: string): Promise<ResumeWithVersions[]> {
+  /**
+   * Listing never ships parsedJson (the full resume text), confirmedProfile, or
+   * fileKey (a storage path) to the browser — only what the UI renders.
+   */
+  findAllForUser(userId: string) {
     return this.prisma.resume.findMany({
       where: { userId },
-      include: { versions: { orderBy: { versionNumber: 'desc' } } },
+      include: {
+        versions: {
+          orderBy: { versionNumber: 'desc' },
+          select: {
+            id: true,
+            versionNumber: true,
+            createdAt: true,
+            activatedAt: true,
+            reconciledAt: true,
+            atsScore: true,
+            atsVerdict: true,
+          },
+        },
+      },
       orderBy: { createdAt: 'desc' },
     });
   }

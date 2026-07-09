@@ -199,7 +199,19 @@ model ResumeVersion {
   versionNumber Int
   fileKey       String // object key in S3/MinIO — never store the file in the DB
   parsedJson    Json? // structured extraction: experience, education, projects, ...
-  atsScore      Int? // 0–100, filled by the analysis worker
+  atsScore      Int? // 0–100 from checkAts() on the raw text layer
+  atsVerdict    String? // SAFE | RISKY | UNREADABLE — what a real ATS would see
+  // The user's corrections to the AI parse. Once set, this — not parsedJson —
+  // is the profile matching runs against.
+  confirmedProfile Json?
+  // Matching uses the newest ACTIVATED version, never merely the newest upload.
+  // Without this an unreviewed parse starts scoring jobs the instant the file
+  // lands, which is exactly what the confirmation step exists to prevent.
+  activatedAt   DateTime?
+  // Reconciliation runs in the background (minutes of paced LLM calls), so its
+  // before/after report is stored rather than returned from the HTTP request.
+  reconciledAt    DateTime?
+  reconcileReport Json?
   createdAt     DateTime @default(now())
 
   resume    Resume           @relation(fields: [resumeId], references: [id], onDelete: Cascade)
@@ -389,7 +401,12 @@ model JobMatch {
   job           Job           @relation(fields: [jobId], references: [id], onDelete: Cascade)
   resumeVersion ResumeVersion @relation(fields: [resumeVersionId], references: [id], onDelete: Cascade)
 
-  @@unique([userId, jobId]) // re-matching updates, never duplicates
+  // One match per (user, job, resume version). A new resume produces new rows
+  // rather than overwriting the old ones, so "which resume version got
+  // interviews" stays answerable. Reads must filter to the ACTIVE version;
+  // without that filter this constraint silently double-counts.
+  @@unique([userId, jobId, resumeVersionId])
+  @@index([userId, resumeVersionId])
   @@index([userId, overallScore])
   @@map("job_matches")
 }

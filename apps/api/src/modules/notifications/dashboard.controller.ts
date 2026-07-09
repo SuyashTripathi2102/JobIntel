@@ -2,6 +2,7 @@ import { Controller, Get } from '@nestjs/common';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import type { AuthenticatedUser } from '../../common/types/authenticated-user';
 import { PrismaService } from '../../prisma/prisma.service';
+import { activeVersionSql } from '../matching/active-resume.sql';
 import { DailyBriefService } from './daily-brief.service';
 import { Prisma } from '@prisma/client';
 
@@ -18,13 +19,25 @@ export class DashboardController {
 
   @Get()
   async get(@CurrentUser() user: AuthenticatedUser) {
+    // Matches from superseded resume versions are retained for outcome
+    // analytics. Counting them here would inflate every funnel number the
+    // moment a second resume is activated.
+    const activeVersion = await this.prisma.resumeVersion.findFirst({
+      where: { resume: { userId: user.id, isPrimary: true }, activatedAt: { not: null } },
+      orderBy: { versionNumber: 'desc' },
+      select: { id: true },
+    });
+    const version = { resumeVersionId: activeVersion?.id ?? '' };
+
     const [briefData, jobsTotal, matches, ge60, notified, applied] = await Promise.all([
       this.brief.data(user.id),
       this.prisma.job.count({ where: { status: 'ACTIVE' } }),
-      this.prisma.jobMatch.count({ where: { userId: user.id } }),
+      this.prisma.jobMatch.count({ where: { userId: user.id, ...version } }),
       this.prisma.jobMatch.count({
-        where: { userId: user.id, opportunityScore: { gte: 60 } },
+        where: { userId: user.id, ...version, opportunityScore: { gte: 60 } },
       }),
+      // Notification memory spans versions on purpose: a job you were already
+      // told about must not be re-announced by a new resume.
       this.prisma.jobMatch.count({
         where: { userId: user.id, notifiedAt: { not: null } },
       }),
@@ -35,7 +48,7 @@ export class DashboardController {
       brief: briefData,
       funnel: { crawled: jobsTotal, matched: matches, recommended: ge60, notified, applied },
       pipeline: await this.todayPipeline(),
-      supply: await this.freshSupply(),
+      supply: await this.freshSupply(user.id),
     };
   }
 
@@ -46,11 +59,11 @@ export class DashboardController {
    * ACTIONABLE ones we've evaluated (the honest coverage metric).
    */
   @Get('supply')
-  supply() {
-    return this.freshSupply();
+  supply(@CurrentUser() user: AuthenticatedUser) {
+    return this.freshSupply(user.id);
   }
 
-  private async freshSupply() {
+  private async freshSupply(userId: string) {
     const india = Prisma.sql`(j.country = 'IN' OR j.location ~* 'india|bengaluru|bangalore|mumbai|pune|delhi|hyderabad|chennai|noida|gurgaon|gurugram|indore|ahmedabad|kolkata')`;
     const eng = Prisma.sql`j.title ~* 'engineer|developer|sde|full.?stack|backend|node|react|software'`;
     const age = Prisma.sql`now()::date - COALESCE(j."postedAt", j."firstSeenAt")::date`;
@@ -68,7 +81,11 @@ export class DashboardController {
         count(*) FILTER (WHERE ${age} <= 7 AND ${india} AND ${eng}) AS fresh_india_eng_7d,
         count(*) FILTER (WHERE ${age} <= 30 AND ${india} AND ${eng}) AS actionable,
         count(*) FILTER (WHERE ${age} <= 30 AND ${india} AND ${eng}
-          AND EXISTS (SELECT 1 FROM job_matches m WHERE m."jobId" = j.id)) AS actionable_evaluated,
+          AND EXISTS (
+            SELECT 1 FROM job_matches m
+            WHERE m."jobId" = j.id AND m."userId" = ${userId}
+              AND m."resumeVersionId" = ${activeVersionSql(userId)}
+          )) AS actionable_evaluated,
         count(*) FILTER (WHERE ${age} > 90 AND ${india} AND ${eng}) AS zombie,
         count(*) FILTER (WHERE ${india} AND ${eng}) AS total_india_eng
       FROM jobs j WHERE j.status = 'ACTIVE'

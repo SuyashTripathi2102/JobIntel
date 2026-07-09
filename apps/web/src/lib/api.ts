@@ -57,6 +57,10 @@ export function apiPatch<T>(path: string, body: unknown): Promise<T> {
   return apiRequest<T>('PATCH', path, body);
 }
 
+export function apiPut<T>(path: string, body: unknown): Promise<T> {
+  return apiRequest<T>('PUT', path, body);
+}
+
 /** Multipart upload — never set content-type, the browser writes the boundary. */
 export async function apiUpload<T>(
   path: string,
