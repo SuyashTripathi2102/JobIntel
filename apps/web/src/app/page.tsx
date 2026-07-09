@@ -43,6 +43,15 @@ interface Dashboard {
     notificationsSent: number;
     explanation: string;
   };
+  supply: {
+    freshIndiaEngineering7d: number;
+    actionable: number;
+    actionableEvaluated: number;
+    coveragePct: number;
+    zombieHidden: number;
+    totalIndiaEngineering: number;
+    providers: { provider: string; freshIndia7d: number; zombiePct: number | null }[];
+  };
 }
 
 /** Score badge: tier semantics (status colors), number always visible. */
@@ -191,14 +200,31 @@ export default function MissionControl() {
         </nav>
       </header>
 
-      {/* North-star funnel */}
-      <section className="mt-6 grid grid-cols-2 gap-3 sm:grid-cols-5">
-        <Tile label="Jobs watched" value={funnel.crawled} />
-        <Tile label="Matched to you" value={funnel.matched} />
-        <Tile label="Recommended" value={funnel.recommended} />
-        <Tile label="Notified" value={funnel.notified} />
+      {/* FRESH SUPPLY — the real constraint. Zombie counts are hidden here on
+          purpose: 6,000 "jobs watched" is a vanity number when only ~50 India
+          engineering roles are actually actionable. */}
+      <section className="mt-6 grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <Tile
+          label="Fresh this week"
+          value={data.supply.freshIndiaEngineering7d}
+          hint="India engineering, ≤7 days"
+        />
+        <Tile
+          label="Actionable now"
+          value={data.supply.actionable}
+          hint="≤30 days old"
+        />
+        <Tile
+          label="Evaluated"
+          value={data.supply.coveragePct}
+          hint={`% of actionable (${data.supply.actionableEvaluated}/${data.supply.actionable})`}
+        />
         <Tile label="Applied" value={funnel.applied} hint="the number that matters" />
       </section>
+      <p className="mt-2 text-[11px] text-neutral-600">
+        {data.supply.zombieHidden} listings older than 90 days are hidden from these numbers —
+        they&apos;re on boards but almost certainly not hiring. Total watched: {funnel.crawled.toLocaleString()}.
+      </p>
 
       {/* Today Pipeline — "why am I / am I not getting jobs?" */}
       <section className="mt-6 rounded-xl border border-neutral-800 bg-neutral-900 p-4">

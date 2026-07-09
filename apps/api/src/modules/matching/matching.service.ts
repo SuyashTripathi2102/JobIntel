@@ -12,6 +12,9 @@ const SIMILARITY_TOP_K = 40; // pgvector prefilter size
 const LLM_SCORE_TOP_N = 15; // how many get deep LLM scoring
 const SCORE_BATCH = 5; // jobs per LLM call (free-tier RPM friendly)
 const MIN_SIMILARITY = 0.45; // incremental path: below this, don't spend LLM calls
+// Reconciliation only evaluates jobs a human could still act on. Beyond this,
+// listings are overwhelmingly zombies (audit: 51% of the India pool is 90d+).
+const RECONCILE_MAX_AGE_DAYS = 45;
 
 interface JobScore {
   jobId: string;
@@ -189,8 +192,10 @@ export class MatchingService {
     const resume = await this.getPrimaryResumeContext(userId);
     const countries = await this.preferredCountries(userId);
 
-    // Active, in-country, embedded, and NOT already matched — ranked by cosine
-    // similarity to the resume so we spend LLM budget on the best candidates.
+    // Actionable-first: only jobs a human could still act on (<= RECONCILE_MAX_AGE
+    // days). 51% of the India pool is 90d+ zombie listings — ranking purely by
+    // similarity burned LLM budget on ghosts while leaving fresh jobs unscored
+    // (2026-07-09 audit). Coverage that matters = eligible ACTIONABLE jobs.
     const candidates = await this.prisma.$queryRaw<
       { id: string; title: string; description: string }[]
     >`
@@ -199,6 +204,7 @@ export class MatchingService {
       JOIN jobs j ON j.id = je."jobId" AND j.status = 'ACTIVE'
       CROSS JOIN (SELECT vector FROM resume_embeddings WHERE "resumeVersionId" = ${resume.resumeVersionId}) re
       WHERE ${countrySql(countries)}
+        AND now()::date - COALESCE(j."postedAt", j."firstSeenAt")::date <= ${RECONCILE_MAX_AGE_DAYS}
         AND NOT EXISTS (SELECT 1 FROM job_matches m WHERE m."jobId" = j.id AND m."userId" = ${userId})
       ORDER BY je.vector <=> re.vector
       LIMIT ${cap}

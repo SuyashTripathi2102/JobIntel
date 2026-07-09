@@ -35,6 +35,72 @@ export class DashboardController {
       brief: briefData,
       funnel: { crawled: jobsTotal, matched: matches, recommended: ge60, notified, applied },
       pipeline: await this.todayPipeline(),
+      supply: await this.freshSupply(),
+    };
+  }
+
+  /**
+   * Fresh Supply — the real north-star for discovery work. 51% of the India
+   * pool is 90d+ zombie listings, so "6,000 jobs watched" is a vanity number.
+   * What matters: fresh target-role opportunities per week, and how many of the
+   * ACTIONABLE ones we've evaluated (the honest coverage metric).
+   */
+  @Get('supply')
+  supply() {
+    return this.freshSupply();
+  }
+
+  private async freshSupply() {
+    const india = Prisma.sql`(j.country = 'IN' OR j.location ~* 'india|bengaluru|bangalore|mumbai|pune|delhi|hyderabad|chennai|noida|gurgaon|gurugram|indore|ahmedabad|kolkata')`;
+    const eng = Prisma.sql`j.title ~* 'engineer|developer|sde|full.?stack|backend|node|react|software'`;
+    const age = Prisma.sql`now()::date - COALESCE(j."postedAt", j."firstSeenAt")::date`;
+
+    const [rows] = await this.prisma.$queryRaw<
+      {
+        fresh_india_eng_7d: bigint;
+        actionable: bigint;
+        actionable_evaluated: bigint;
+        zombie: bigint;
+        total_india_eng: bigint;
+      }[]
+    >`
+      SELECT
+        count(*) FILTER (WHERE ${age} <= 7 AND ${india} AND ${eng}) AS fresh_india_eng_7d,
+        count(*) FILTER (WHERE ${age} <= 30 AND ${india} AND ${eng}) AS actionable,
+        count(*) FILTER (WHERE ${age} <= 30 AND ${india} AND ${eng}
+          AND EXISTS (SELECT 1 FROM job_matches m WHERE m."jobId" = j.id)) AS actionable_evaluated,
+        count(*) FILTER (WHERE ${age} > 90 AND ${india} AND ${eng}) AS zombie,
+        count(*) FILTER (WHERE ${india} AND ${eng}) AS total_india_eng
+      FROM jobs j WHERE j.status = 'ACTIVE'
+    `;
+
+    // Which sources actually produce fresh India opportunities (vs DB rows).
+    const providers = await this.prisma.$queryRaw<
+      { provider: string; fresh_india_7d: bigint; zombie_pct: number | null }[]
+    >`
+      SELECT c."atsProvider"::text AS provider,
+             count(*) FILTER (WHERE ${age} <= 7 AND ${india}) AS fresh_india_7d,
+             round(100.0 * count(*) FILTER (WHERE ${age} > 90) / NULLIF(count(*), 0)) AS zombie_pct
+      FROM jobs j JOIN companies c ON c.id = j."companyId"
+      WHERE j.status = 'ACTIVE'
+      GROUP BY 1 ORDER BY 2 DESC LIMIT 6
+    `;
+
+    const actionable = Number(rows?.actionable ?? 0);
+    const evaluated = Number(rows?.actionable_evaluated ?? 0);
+    return {
+      freshIndiaEngineering7d: Number(rows?.fresh_india_eng_7d ?? 0),
+      actionable,
+      actionableEvaluated: evaluated,
+      // The honest coverage metric: eligible ACTIONABLE jobs evaluated.
+      coveragePct: actionable ? Math.round((evaluated / actionable) * 100) : 100,
+      zombieHidden: Number(rows?.zombie ?? 0),
+      totalIndiaEngineering: Number(rows?.total_india_eng ?? 0),
+      providers: providers.map((p) => ({
+        provider: p.provider,
+        freshIndia7d: Number(p.fresh_india_7d),
+        zombiePct: p.zombie_pct == null ? null : Number(p.zombie_pct),
+      })),
     };
   }
 
