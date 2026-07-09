@@ -33,6 +33,8 @@ interface ResumeProfile {
   projects: Project[];
   education: Education[];
   summaryForMatching: string;
+  /** Named in the resume, absent from the profile. Never merged without a click. */
+  suggestedSkills: string[];
 }
 
 interface SaveResult {
@@ -233,6 +235,44 @@ export default function ReviewProfile({ params }: { params: Promise<{ versionId:
           onRemove={(i) => set('skills', p.skills.filter((_, j) => j !== i))}
           onAdd={(v) => set('skills', [...p.skills, v])}
         />
+        {p.suggestedSkills.length > 0 && (
+          <div className="mt-4 rounded-lg border border-sky-900 bg-sky-950/40 p-3">
+            <div className="flex items-baseline justify-between gap-3">
+              <p className="text-xs text-sky-300">
+                <strong className="font-medium">
+                  {p.suggestedSkills.length} skill
+                  {p.suggestedSkills.length === 1 ? '' : 's'} named in your resume
+                </strong>{' '}
+                but missing from this profile. An earlier parse dropped them — nothing is added
+                until you say so.
+              </p>
+              <button
+                onClick={() => {
+                  set('skills', [...p.skills, ...p.suggestedSkills]);
+                  set('suggestedSkills', []);
+                }}
+                className="shrink-0 rounded-md border border-sky-700 bg-sky-900/60 px-2.5 py-1 text-xs text-sky-100 hover:bg-sky-900"
+              >
+                Add all
+              </button>
+            </div>
+            <div className="mt-2 flex flex-wrap gap-1.5">
+              {p.suggestedSkills.map((s) => (
+                <button
+                  key={s}
+                  onClick={() => {
+                    set('skills', [...p.skills, s]);
+                    set('suggestedSkills', p.suggestedSkills.filter((x) => x !== s));
+                  }}
+                  title="Found in your resume text — click to add"
+                  className="rounded-full border border-sky-800 bg-sky-950 px-2.5 py-1 text-xs text-sky-200 hover:border-sky-600"
+                >
+                  + {s}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
       </Section>
 
       <Section title={`Employment (${p.experience.length})`}>

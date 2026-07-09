@@ -188,7 +188,7 @@ const BUILDS_SOFTWARE: CodingIntensity[] = ['PRIMARY', 'SUBSTANTIAL'];
  * substring matching anywhere: "react" never matches "react native", "c" never
  * matches "c++" or "css", "go" never matches "mongodb".
  */
-const TECH_ALIASES: Record<string, string> = {
+export const TECH_ALIASES: Record<string, string> = {
   // JavaScript family
   js: 'javascript', javascript: 'javascript', 'java script': 'javascript',
   ecmascript: 'javascript', es6: 'javascript', 'es6+': 'javascript', es2015: 'javascript',
@@ -255,7 +255,7 @@ export function canonicalTech(raw: string): string | null {
 }
 
 /** Aliases that are ordinary English words. Only an exact match counts. */
-const AMBIGUOUS_ALIASES = new Set([
+export const AMBIGUOUS_ALIASES = new Set([
   'go', 'c', 'api', 'apis', 'express', 'node', 'rest', 'sql', 'ml', 'spring',
   'swift', 'rails', 'flask', 'ruby', 'php', 'java', 'react', 'js', 'ts',
 ]);
@@ -263,9 +263,17 @@ const AMBIGUOUS_ALIASES = new Set([
 const ALIASES_BY_LENGTH = Object.keys(TECH_ALIASES).sort((a, b) => b.length - a.length);
 
 /**
- * Skills you don't have that a skill you DO have partially prepares you for.
- * Half credit — transferable, not equivalent. React does not make you a React
- * Native developer, but it is not nothing either.
+ * Domain transferability — NOT skill knowledge.
+ *
+ * A technology you have never used, that a technology you HAVE used partially
+ * prepares you for. Half credit, and it must never be rendered as a matched
+ * skill: knowing MySQL does not mean you know MongoDB's document modeling,
+ * aggregation pipelines, or embed-vs-reference tradeoffs. It means a recruiter
+ * asking about MongoDB is not asking a stranger about databases.
+ *
+ * The bar for an entry here is "same paradigm, transferable mental model".
+ * `redis: ['mysql']` used to live here and was wrong — an in-memory key-value
+ * cache shares nothing operational with a relational database.
  */
 const TRANSFERABLE: Record<string, string[]> = {
   'react-native': ['react', 'javascript', 'flutter'],
@@ -275,16 +283,27 @@ const TRANSFERABLE: Record<string, string[]> = {
   typescript: ['javascript'],
   nextjs: ['react'],
   graphql: ['rest'],
-  redis: ['mysql'],
   azure: ['aws'],
   gcp: ['aws'],
 };
 
+/** A JD technology reached only through adjacent experience, never directly. */
+export interface TransferableMatch {
+  /** The technology the JD asked for, as the JD wrote it. */
+  skill: string;
+  /** The skill on the resume that partially prepares for it. */
+  via: string;
+  /** Rendered verbatim. Says "no evidence" out loud so no UI can imply otherwise. */
+  note: string;
+}
+
 export interface SpecializationBreakdown {
   /** null when the JD names no technologies — an honest unknown, not a zero. */
   fit: number | null;
+  /** On the resume. Direct evidence. */
   strong: string[];
-  partial: string[];
+  /** NOT on the resume. Half credit for adjacency; never a match. */
+  transferable: TransferableMatch[];
   missing: string[];
 }
 
@@ -296,28 +315,43 @@ export function specializationBreakdown(
   c: JobClassification,
   userSkills: string[],
 ): SpecializationBreakdown {
-  const mine = new Set(
-    userSkills.map(canonicalTech).filter((t): t is string => t !== null),
-  );
+  // canonical token -> the skill as the USER wrote it, for display in `via`.
+  const mine = new Map<string, string>();
+  for (const s of userSkills) {
+    const t = canonicalTech(s);
+    if (t && !mine.has(t)) mine.set(t, s);
+  }
 
   const jd = [...new Set([...c.requiredSkills, ...c.specialization])]
     .map((s) => ({ raw: s, tech: canonicalTech(s) }))
     .filter((x): x is { raw: string; tech: string } => x.tech !== null);
 
-  if (jd.length === 0) return { fit: null, strong: [], partial: [], missing: [] };
+  if (jd.length === 0) return { fit: null, strong: [], transferable: [], missing: [] };
 
   const strong: string[] = [];
-  const partial: string[] = [];
+  const transferable: TransferableMatch[] = [];
   const missing: string[] = [];
 
   for (const { raw, tech } of jd) {
-    if (mine.has(tech)) strong.push(raw);
-    else if ((TRANSFERABLE[tech] ?? []).some((t) => mine.has(t))) partial.push(raw);
-    else missing.push(raw);
+    if (mine.has(tech)) {
+      strong.push(raw);
+      continue;
+    }
+    const bridge = (TRANSFERABLE[tech] ?? []).find((t) => mine.has(t));
+    if (bridge) {
+      const via = mine.get(bridge)!;
+      transferable.push({
+        skill: raw,
+        via,
+        note: `related experience through ${via}; no confirmed ${raw} evidence`,
+      });
+    } else {
+      missing.push(raw);
+    }
   }
 
-  const fit = Math.round(((strong.length + 0.5 * partial.length) / jd.length) * 100);
-  return { fit, strong, partial, missing };
+  const fit = Math.round(((strong.length + 0.5 * transferable.length) / jd.length) * 100);
+  return { fit, strong, transferable, missing };
 }
 
 /** Specialization fit only. See specializationBreakdown() for the working. */

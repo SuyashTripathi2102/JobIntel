@@ -12,6 +12,7 @@ import { Queue } from 'bullmq';
 import { randomUUID } from 'crypto';
 import { PDFParse } from 'pdf-parse';
 import { checkAts } from './ats-check';
+import { classifySkillOrigins, isNamedInResume, manuallyAdded } from './skill-provenance';
 import { MatchingService } from '../matching/matching.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { StorageService } from '../storage/storage.service';
@@ -34,6 +35,15 @@ export interface ResumeProfile {
   projects: ParsedResume['projects'];
   education: ParsedResume['education'];
   summaryForMatching: string;
+}
+
+/**
+ * What the review screen renders: the profile, plus skills a re-parse found in
+ * the resume that the confirmed profile is missing. Suggestions are never
+ * stored — the user accepts them, or they stay suggestions.
+ */
+export interface ReviewableProfile extends ResumeProfile {
+  suggestedSkills: string[];
 }
 
 // PDFs frequently embed NUL and other control characters, which Postgres
@@ -137,7 +147,7 @@ export class ResumesService {
    * from the raw text rather than the LLM: they are exact strings, and an
    * invented phone number is worse than a missing one.
    */
-  async profile(userId: string, resumeVersionId: string): Promise<ResumeProfile> {
+  async profile(userId: string, resumeVersionId: string): Promise<ReviewableProfile> {
     const version = await this.ownedVersion(userId, resumeVersionId);
     const parsedJson = version.parsedJson as {
       rawText?: string;
@@ -147,11 +157,25 @@ export class ResumesService {
     if (!structured) {
       throw new BadRequestException('This version has not been parsed yet');
     }
-    const confirmed = version.confirmedProfile as ResumeProfile | null;
-    if (confirmed) return confirmed;
-
     const raw = parsedJson?.rawText ?? '';
+    const confirmed = version.confirmedProfile as ResumeProfile | null;
+
+    // A re-parse (after a parser fix) can find skills the confirmed profile
+    // never had — the 2026-07-10 prompt bug dropped HTML5, CSS3, RESTful APIs
+    // and OAuth 2.0 from a resume that named all four. Surface them for the
+    // user to accept. Never merge them in silently: a profile that changes
+    // without the user's knowledge is the failure the review screen exists to
+    // prevent, and it works the same whether the change is wrong or right.
+    if (confirmed) {
+      const have = new Set(confirmed.skills.map((s) => s.toLowerCase()));
+      const suggestedSkills = structured.skills
+        .map((s) => s.name)
+        .filter((name) => !have.has(name.toLowerCase()) && isNamedInResume(name, raw));
+      return { ...confirmed, suggestedSkills };
+    }
+
     return {
+      suggestedSkills: [],
       fullName: structured.fullName,
       email: raw.match(/[\w.+-]+@[\w-]+\.[\w.]+/)?.[0] ?? null,
       phone: raw.match(/\+?\d[\d\s()-]{8,14}\d/)?.[0]?.trim() ?? null,
@@ -174,21 +198,29 @@ export class ResumesService {
    * about, never blocked — AI extraction misses real information, and the user
    * is the authority on their own history.
    */
-  async saveProfile(userId: string, resumeVersionId: string, profile: ResumeProfile) {
+  async saveProfile(
+    userId: string,
+    resumeVersionId: string,
+    incoming: ResumeProfile & { suggestedSkills?: string[] },
+  ) {
     const version = await this.ownedVersion(userId, resumeVersionId);
-    const raw = (
-      (version.parsedJson as { rawText?: string } | null)?.rawText ?? ''
-    ).toLowerCase();
+    const raw = (version.parsedJson as { rawText?: string } | null)?.rawText ?? '';
+
+    // Suggestions are a rendering concern. Whatever the client echoes back,
+    // only the confirmed profile is persisted.
+    const { suggestedSkills: _ignored, ...profile } = incoming;
 
     // Provenance, not just a warning. A skill the user adds is real profile
     // data and may be matched on, but CareerOS must never later claim the
     // submitted PDF contains it — that would poison resume tailoring.
-    const manuallyAddedSkills = profile.skills.filter((s) => !raw.includes(s.toLowerCase()));
+    const origins = classifySkillOrigins(profile.skills, raw);
+    const manuallyAddedSkills = manuallyAdded(origins);
 
     await this.prisma.resumeVersion.update({
       where: { id: version.id },
       data: {
         confirmedProfile: profile as unknown as Prisma.InputJsonValue,
+        skillProvenance: origins as unknown as Prisma.InputJsonValue,
         manuallyAddedSkills,
       },
     });

@@ -469,10 +469,16 @@ describe('technology names are not substrings of one another', () => {
     expect(canonicalTech('customer success')).toBeNull();
   });
 
-  it('React earns partial credit toward React Native, never full credit', () => {
+  it('React earns transferable credit toward React Native, never full credit', () => {
     const rn = classification({ requiredSkills: ['React Native'], specialization: [] });
     const b = specializationBreakdown(rn, ['React.js', 'JavaScript']);
-    expect(b.partial).toEqual(['React Native']);
+    expect(b.transferable).toEqual([
+      {
+        skill: 'React Native',
+        via: 'React.js',
+        note: 'related experience through React.js; no confirmed React Native evidence',
+      },
+    ]);
     expect(b.strong).toEqual([]);
     expect(b.fit).toBe(50);
   });
@@ -490,9 +496,29 @@ describe('specializationFit shows its working', () => {
   it('names what earned the score and what cost it', () => {
     const b = specializationBreakdown(abhibusJd, myStack);
     expect(b.strong).toEqual(['React.js', 'Node.js', 'JavaScript', 'HTML5', 'CSS3', 'MySQL']);
-    expect(b.partial).toEqual(['MongoDB']); // MySQL transfers, partially
+    expect(b.transferable).toEqual([
+      {
+        skill: 'MongoDB',
+        via: 'MySQL',
+        note: 'related experience through MySQL; no confirmed MongoDB evidence',
+      },
+    ]);
     expect(b.missing).toEqual(['Cassandra']);
     expect(b.fit).toBe(81); // (6 + 0.5) / 8
+  });
+
+  it('never presents a transferable technology as a skill the resume has', () => {
+    const b = specializationBreakdown(abhibusJd, myStack);
+    expect(b.strong).not.toContain('MongoDB');
+    expect(b.transferable[0].note).toContain('no confirmed MongoDB evidence');
+  });
+
+  it('MySQL does not transfer to Redis — a KV cache is not a relational database', () => {
+    const jd = classification({ requiredSkills: ['Redis'], specialization: [] });
+    const b = specializationBreakdown(jd, ['MySQL']);
+    expect(b.missing).toEqual(['Redis']);
+    expect(b.transferable).toEqual([]);
+    expect(b.fit).toBe(0);
   });
 
   it('returns null, not zero, when the JD names no technologies', () => {

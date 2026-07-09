@@ -1,0 +1,12 @@
+-- Where every skill on the profile came from.
+--
+-- manuallyAddedSkills stated provenance as an absence, and computed it with
+-- rawText.includes(skill) — the substring bug that let "JavaScript" answer a
+-- search for "java". It was wrong in both directions: "REST APIs" is not a
+-- substring of "RESTful APIs" (a real skill stamped as invented), and "Go" is
+-- a substring of "Google" (an invented skill stamped as evidence).
+--
+-- Null here means "not yet recomputed", which is honest. It is deliberately
+-- NOT backfilled from manuallyAddedSkills — that column was produced by the
+-- broken comparison, and copying it forward would launder the bug.
+ALTER TABLE "resume_versions" ADD COLUMN "skillProvenance" JSONB;

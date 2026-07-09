@@ -23,8 +23,16 @@ export interface ParsedResume {
   summaryForMatching: string; // dense paragraph used for the embedding
 }
 
+// The skills rule is long on purpose. Its first version read "normalized
+// lowercase names ("react", "node.js", "postgresql")" — a library, a runtime
+// and a database — and the model generalised those exemplars into "notable
+// engineering technologies", silently dropping HTML5, CSS3, RESTful APIs and
+// OAuth 2.0 from a resume that named all four. Extraction is not curation: if
+// the document says it, the profile gets it. The user decides what matters.
 const PARSE_PROMPT = `Extract structured data from this resume. Rules:
-- skills: normalized lowercase names ("react", "node.js", "postgresql"); category one of language|framework|library|database|cloud|devops|tool|soft-skill|other; yearsOfUse when inferable, else null.
+- skills: EVERY technology named anywhere in the resume. Extract exhaustively, never selectively — never omit a technology because it seems basic, obvious, dated or unimportant. This explicitly INCLUDES markup and styling languages (html5, css3, sass), API styles and protocols (restful apis, graphql, websockets), auth standards (jwt, oauth 2.0, bcrypt) and third-party services (razorpay, twilio, cloudinary). If a Skills section lists it, it belongs in this array.
+- skills: EXCLUDE only things that are not technologies at all ("middleware", "rate limiting", "problem solving", "agile").
+- skills: normalized lowercase, named as the resume names them ("react.js", "node.js", "html5", "restful apis", "oauth 2.0"); category one of language|markup|framework|library|database|protocol|cloud|devops|service|tool|soft-skill|other; yearsOfUse when inferable, else null.
 - experience: reverse-chronological; dates as YYYY-MM when present.
 - totalYearsExperience: best estimate as a number, null if unclear.
 - summaryForMatching: ONE dense paragraph (120-180 words) written for semantic job matching: role, seniority, years, core stack, domains, standout achievements. No fluff.

@@ -207,6 +207,10 @@ model ResumeVersion {
   // Skills the user added that are NOT in the resume text. Valid profile data,
   // but CareerOS must never claim the submitted PDF contains them.
   manuallyAddedSkills String[] @default([])
+  // [{ skill, source: RESUME_EXTRACTED | MANUALLY_ADDED }] — the same judgement
+  // as manuallyAddedSkills, but stated per-skill and positively rather than as
+  // an absence, so every surface can cite where a skill came from.
+  skillProvenance Json?
   // Matching uses the newest ACTIVATED version, never merely the newest upload.
   // Without this an unreviewed parse starts scoring jobs the instant the file
   // lands, which is exactly what the confirmation step exists to prevent.
