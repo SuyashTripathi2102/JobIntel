@@ -135,6 +135,7 @@ export class NotificationsService {
       ageDays,
       evergreen,
       activelyHiring,
+      title: match.job.title,
     });
     if (decision.verdict === 'SKIP') {
       this.logger.log(
@@ -252,8 +253,14 @@ export class NotificationsService {
     if (this.dashboardUrl?.startsWith('http')) {
       rows[0].push({ text: '📄 Details', url: `${this.dashboardUrl}/jobs/${job.id}` });
     }
-    if (job.company.careerPageUrl && job.company.careerPageUrl !== applyUrl) {
-      rows.push([{ text: '🏢 All openings', url: job.company.careerPageUrl }]);
+    // "All openings" MUST point at the ATS board we actually crawl — not the
+    // company's branded careers page, which shows different/cached jobs and
+    // makes the notified job look "missing" (2026-07-09, AbhiBus report).
+    const boardUrl =
+      boardRootUrl(job.company.atsProvider, job.company.atsIdentifier) ??
+      job.company.careerPageUrl;
+    if (boardUrl && boardUrl !== applyUrl) {
+      rows.push([{ text: '🏢 All openings', url: boardUrl }]);
     }
     return rows;
   }

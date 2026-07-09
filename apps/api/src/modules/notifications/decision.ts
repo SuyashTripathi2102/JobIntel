@@ -13,6 +13,8 @@ export interface DecisionInput {
   resumeMatch: number;
   missingSkills: string[];
   modules: ScoreModule[];
+  /** Job title — used to catch different role families (PM/sales/design). */
+  title?: string;
   /** Days since posted (or first seen). Staleness caps the verdict. */
   ageDays?: number;
   /** Big-tech/evergreen employers keep strategic roles open for months. */
@@ -65,6 +67,14 @@ export function decide(input: DecisionInput): Decision {
     blockers.push(`core stack mismatch — ${Math.round(input.resumeMatch)}% match, different specialization`);
   }
 
+  // Role-family mismatch: an engineer should never be pushed a PM / sales /
+  // design / QA-manager role just because the company context overlaps
+  // (2026-07-09: an Associate Product Manager scored 68 and was sent).
+  const roleMismatch = isNonEngineeringRole(input.title);
+  if (roleMismatch) {
+    blockers.push('different role family — not a software engineering position');
+  }
+
   // Staleness interprets the age instead of just displaying it (2026-07-08
   // feedback: a 70d-old posting must never read as high priority) — but a
   // recruiter reads age in CONTEXT: Google leaves strategic roles open for
@@ -98,8 +108,11 @@ export function decide(input: DecisionInput): Decision {
   if (verdict === 'APPLY' && blockers.length > 0) verdict = 'CONSIDER';
   if (age > 60 && !stillHiring) verdict = 'SKIP';
   if (coreMismatch) verdict = 'SKIP';
+  if (roleMismatch) verdict = 'SKIP';
 
-  const tierEmoji = score >= 75 ? '🟢' : score >= 60 ? '🟡' : '🔴';
+  // Emoji follows the VERDICT, not the score — a green badge over "CONSIDER"
+  // was contradictory (2026-07-09). Green = apply, yellow = consider, red = skip.
+  const tierEmoji = verdict === 'APPLY' ? '🟢' : verdict === 'CONSIDER' ? '🟡' : '🔴';
   const action =
     verdict === 'APPLY' ? '✅ APPLY' : verdict === 'CONSIDER' ? '🤔 CONSIDER' : '❌ SKIP';
 
@@ -110,6 +123,19 @@ export function decide(input: DecisionInput): Decision {
     action,
     reasons: [...reasons, ...blockers.map((b) => `⚠ ${b}`)],
   };
+}
+
+/** Title-based role-family guard. Conservative — only fires on clear non-eng
+ *  role words, and never on titles that also name an engineering discipline. */
+function isNonEngineeringRole(title?: string): boolean {
+  if (!title) return false;
+  const t = title.toLowerCase();
+  const eng =
+    /\b(engineer|developer|programmer|sde|architect|devops|full[\s-]?stack|backend|back[\s-]?end|frontend|front[\s-]?end|software|data scientist|ml|machine learning)\b/;
+  if (eng.test(t)) return false;
+  const nonEng =
+    /\b(product manager|program manager|project manager|sales|business development|marketing|recruit|talent acquisition|hr\b|human resources|designer|ux researcher|accountant|finance|customer success|account executive|content writer|operations manager|admin\b)\b/;
+  return nonEng.test(t);
 }
 
 /** 🔥 today · 🟡 this week · ⚪ older — humans parse symbols faster than dates. */
