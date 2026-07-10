@@ -175,18 +175,32 @@ export class DailyBriefService {
             AND ${notActedOnSql(userId)}
           ORDER BY m."opportunityScore" DESC LIMIT 3
         `,
+        // "Fresh roles this week": companies with the most FRESH (≤7d posted),
+        // India, engineering-titled openings. The old query grouped every job
+        // firstSeenAt this week — a company's first crawl made its whole board
+        // (sales, HR, ops, any country) look freshly hiring.
         this.prisma.$queryRaw<{ company: string; n: bigint }[]>`
           SELECT c.name AS company, count(*) AS n
           FROM jobs j JOIN companies c ON c.id = j."companyId"
-          WHERE j."firstSeenAt" >= ${weekAgo}
+          WHERE j.status = 'ACTIVE'
+            AND now()::date - COALESCE(j."postedAt", j."firstSeenAt")::date <= 7
+            AND (j.country = 'IN' OR j.location ~* 'india|bengaluru|bangalore|mumbai|pune|delhi|hyderabad|chennai|noida|gurgaon|gurugram|indore|ahmedabad|kolkata')
+            AND j.title ~* 'engineer|developer|sde|full.?stack|backend|frontend|node|react|software'
           GROUP BY c.name ORDER BY n DESC LIMIT 3
         `,
+        // "Learn next": skills blocking the jobs you could ACTUALLY get. Scoped
+        // to APPLY/CONSIDER on the active resume — without the verdict filter it
+        // counted skills from marketing/SRE/data roles too, and told a Node dev
+        // to learn Python because 300 irrelevant AI roles mention it.
         this.prisma.$queryRaw<{ skill: string; n: bigint }[]>`
           SELECT skill, count(*) AS n
-          FROM job_matches m, unnest(m."missingSkills") AS skill
+          FROM job_matches m
+          JOIN jobs j ON j.id = m."jobId" AND j.status = 'ACTIVE'
+          CROSS JOIN LATERAL unnest(m."missingSkills") AS skill
           WHERE m."userId" = ${userId}
             AND m."resumeVersionId" = ${activeVersionSql(userId)}
-            AND m."createdAt" >= ${weekAgo}
+            AND m.verdict IN ('APPLY', 'CONSIDER')
+            AND (j.country = 'IN' OR j.location ~* 'india|bengaluru|bangalore|mumbai|pune|delhi|hyderabad|chennai|noida|gurgaon|gurugram|indore|ahmedabad|kolkata')
           GROUP BY skill ORDER BY n DESC LIMIT 3
         `,
       ]);

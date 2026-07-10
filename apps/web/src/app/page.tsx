@@ -362,7 +362,7 @@ export default function MissionControl() {
       <section className="mt-8 grid gap-4 sm:grid-cols-2">
         <div className="rounded-xl border border-neutral-800 bg-neutral-900 p-4">
           <h3 className="text-sm font-medium uppercase tracking-wide text-neutral-400">
-            Hiring this week
+            Fresh roles this week
           </h3>
           <ul className="mt-3 space-y-2">
             {brief.trending.map((t) => (
@@ -371,7 +371,13 @@ export default function MissionControl() {
                 <span className="tabular-nums text-neutral-400">+{t.newJobs7d} roles</span>
               </li>
             ))}
+            {brief.trending.length === 0 && (
+              <li className="text-sm text-neutral-600">No fresh India engineering roles this week.</li>
+            )}
           </ul>
+          <p className="mt-3 text-[11px] text-neutral-500">
+            Companies with the most India engineering roles posted in the last 7 days.
+          </p>
         </div>
         <div className="rounded-xl border border-neutral-800 bg-neutral-900 p-4">
           <h3 className="text-sm font-medium uppercase tracking-wide text-neutral-400">
@@ -381,12 +387,18 @@ export default function MissionControl() {
             {brief.missingSkills.map((s) => (
               <li key={s.skill} className="flex items-baseline justify-between text-sm">
                 <span className="text-neutral-200">Learn {s.skill}</span>
-                <span className="tabular-nums text-neutral-400">unlocks {s.count} matches</span>
+                <span className="tabular-nums text-neutral-400">unlocks {s.count} roles</span>
               </li>
             ))}
+            {brief.missingSkills.length === 0 && (
+              <li className="text-sm text-neutral-600">
+                Nothing blocking your reachable roles right now.
+              </li>
+            )}
           </ul>
           <p className="mt-3 text-[11px] text-neutral-500">
-            The skills blocking the most of your current matches.
+            Skills missing from your resume that block the India roles you could actually get
+            (apply / consider only).
           </p>
         </div>
       </section>
