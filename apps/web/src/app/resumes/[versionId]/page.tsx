@@ -144,6 +144,7 @@ export default function ReviewProfile({ params }: { params: Promise<{ versionId:
   const [saved, setSaved] = useState<SaveResult | null>(null);
   const [busy, setBusy] = useState(false);
   const [activated, setActivated] = useState(false);
+  const [rescored, setRescored] = useState<number | null>(null);
 
   useEffect(() => {
     apiGet<ResumeProfile>(`/resumes/versions/${versionId}/profile`)
@@ -191,6 +192,25 @@ export default function ReviewProfile({ params }: { params: Promise<{ versionId:
     try {
       await apiPost(`/resumes/versions/${versionId}/activate`, {});
       setActivated(true);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  /**
+   * Re-score existing matches in place against the just-saved profile. No
+   * re-activation, no LLM — the resume scores are already stored. This is the
+   * light path for "I corrected a skill"; full activation is only for a new
+   * resume version.
+   */
+  async function reevaluate() {
+    setBusy(true);
+    try {
+      const r = await apiPost<{ rescored: number; notified: number }>(`/matches/rescore`, {});
+      setRescored(r.rescored);
+      setSaved((s) => (s ? { ...s, rescoreRequired: false } : s));
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -376,10 +396,28 @@ export default function ReviewProfile({ params }: { params: Promise<{ versionId:
       ))}
 
       {saved?.rescoreRequired && (
-        <p className="mt-4 rounded-lg border border-sky-900 bg-sky-950/40 p-3 text-sm text-sky-300">
-          Profile saved — <strong className="font-medium">but no score has changed yet.</strong>{' '}
-          Your jobs are still ranked against the previous profile. Click{' '}
-          <strong className="font-medium">Confirm &amp; activate</strong> to re-score them.
+        <div className="mt-4 rounded-lg border border-sky-900 bg-sky-950/40 p-3">
+          <p className="text-sm text-sky-300">
+            Profile saved — <strong className="font-medium">but no score has changed yet.</strong>{' '}
+            Your jobs are still ranked against the previous profile.
+          </p>
+          <button
+            onClick={reevaluate}
+            disabled={busy}
+            className="mt-2 rounded-md border border-sky-700 bg-sky-900/60 px-3 py-1.5 text-xs text-sky-100 hover:bg-sky-900 disabled:opacity-50"
+          >
+            {busy ? 'Re-evaluating…' : 'Re-evaluate my jobs now'}
+          </button>
+        </div>
+      )}
+
+      {rescored !== null && (
+        <p className="mt-4 rounded-lg border border-emerald-900 bg-emerald-950/40 p-3 text-sm text-emerald-300">
+          Re-evaluated <strong className="font-medium">{rescored}</strong> jobs against your updated
+          profile.{' '}
+          <a href="/" className="underline underline-offset-2 hover:text-emerald-200">
+            See your matches →
+          </a>
         </p>
       )}
 
