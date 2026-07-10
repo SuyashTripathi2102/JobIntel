@@ -420,6 +420,8 @@ export interface ExperienceVerdict {
   eligible: boolean;
   /** true = may reach CONSIDER but never APPLY automatically. */
   capsAtConsider: boolean;
+  /** Rejected for being BELOW the user's level (intern/trainee), not above it. */
+  belowLevel: boolean;
   reason: string;
 }
 
@@ -431,35 +433,62 @@ export function experienceVerdict(c: JobClassification, years: number): Experien
   const senior: Seniority[] = ['SENIOR', 'LEAD', 'STAFF', 'PRINCIPAL'];
   const min = c.minimumYears;
 
+  // The floor. The gate rejected roles above the user's level and let ones
+  // below it through, so an internship reached a two-year engineer's Telegram
+  // (2026-07-10). An intern/trainee posting is a downgrade, not a match — the
+  // strongest signal being that these roles state no minimum experience
+  // precisely because they expect none. Never eligible; never a notification.
+  if (c.seniority === 'INTERN' && years >= 1) {
+    return {
+      eligible: false,
+      capsAtConsider: false,
+      belowLevel: true,
+      reason: `internship — below your ${years} years of experience`,
+    };
+  }
+
   // Seniority language outranks a soft minimum, unless the JD's own number
   // contradicts it (some companies title a 2-year role "Senior").
   if (senior.includes(c.seniority) && (min === null || min > years + 1)) {
     return {
       eligible: false,
       capsAtConsider: false,
+      belowLevel: false,
       reason: `${c.seniority.toLowerCase()} role — beyond ${years} years of experience`,
     };
   }
 
   if (min === null) {
-    return { eligible: true, capsAtConsider: false, reason: 'no explicit experience requirement' };
+    return {
+      eligible: true,
+      capsAtConsider: false,
+      belowLevel: false,
+      reason: 'no explicit experience requirement',
+    };
   }
 
   const asks = c.maximumYears ? `${min}–${c.maximumYears} years` : `${min}+ years`;
   const gap = min - years;
   if (gap <= 0) {
-    return { eligible: true, capsAtConsider: false, reason: `JD requests ${asks}; you have ~${years}` };
+    return {
+      eligible: true,
+      capsAtConsider: false,
+      belowLevel: false,
+      reason: `JD requests ${asks}; you have ~${years}`,
+    };
   }
   if (gap === 1) {
     return {
       eligible: true,
       capsAtConsider: true,
+      belowLevel: false,
       reason: `Experience stretch: JD requests ${asks}; your profile has approximately ${years} years`,
     };
   }
   return {
     eligible: false,
     capsAtConsider: false,
+    belowLevel: false,
     reason: `JD requests ${asks}; your profile has approximately ${years} years — ${gap} years short`,
   };
 }
@@ -473,6 +502,8 @@ export type EligibilityCode =
   | 'TARGET_ROLE_ELIGIBLE'
   | 'TARGET_ROLE_EXPERIENCE_STRETCH'
   | 'TARGET_ROLE_TOO_SENIOR'
+  /** Below the user's level — internship / trainee. */
+  | 'TARGET_ROLE_BELOW_LEVEL'
   /** Right role, wrong stack — decided by resume scoring, not by the gate. */
   | 'TARGET_ROLE_WEAK_STACK'
   | 'DEVELOPMENT_WRONG_SPECIALIZATION'
@@ -591,9 +622,15 @@ export function eligibility(c: JobClassification, p: RoleProfile): Eligibility {
   }
 
   // Seniority and years are hard, and they come before review triage: a role
-  // you cannot get should not consume your attention in the review queue.
+  // you cannot get — or should not want — should not consume review attention.
   if (!exp.eligible) {
-    return { ...base, eligible: false, needsReview: false, code: 'TARGET_ROLE_TOO_SENIOR', reason: exp.reason };
+    return {
+      ...base,
+      eligible: false,
+      needsReview: false,
+      code: exp.belowLevel ? 'TARGET_ROLE_BELOW_LEVEL' : 'TARGET_ROLE_TOO_SENIOR',
+      reason: exp.reason,
+    };
   }
 
   if (fit === 'AMBIGUOUS' || c.developmentConfidence < REVIEW_MIN_CONFIDENCE) {

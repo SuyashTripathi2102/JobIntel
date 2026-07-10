@@ -1,7 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../../prisma/prisma.service';
-import { activeVersionSql } from '../matching/active-resume.sql';
+import { activeVersionSql, notActedOnSql } from '../matching/active-resume.sql';
 import { locationTags } from '../matching/location-filter';
 import { TelegramChannel } from './channels';
 
@@ -56,6 +56,7 @@ export class DailyBriefService {
           AND m."notifiedAt" IS NULL
           AND COALESCE(j."postedAt", j."firstSeenAt") >= now() - interval '30 days'
           AND (j.country = 'IN' OR j.location ~* 'india|bengaluru|bangalore|mumbai|pune|delhi|hyderabad|chennai|noida|gurgaon|indore|ahmedabad')
+          AND ${notActedOnSql(user.id)}
         ORDER BY m."opportunityScore" DESC
         LIMIT 8
       `;
@@ -156,6 +157,7 @@ export class DailyBriefService {
             AND m."resumeVersionId" = ${activeVersionSql(userId)}
             AND m.verdict = 'APPLY'
             AND COALESCE(j."postedAt", j."firstSeenAt") >= ${weekAgo}
+            AND ${notActedOnSql(userId)}
           ORDER BY m."opportunityScore" DESC LIMIT 3
         `,
         this.prisma.$queryRaw<
@@ -170,6 +172,7 @@ export class DailyBriefService {
             AND m."resumeVersionId" = ${activeVersionSql(userId)}
             AND m.verdict = 'CONSIDER'
             AND COALESCE(j."postedAt", j."firstSeenAt") >= ${new Date(Date.now() - 30 * 86_400_000)}
+            AND ${notActedOnSql(userId)}
           ORDER BY m."opportunityScore" DESC LIMIT 3
         `,
         this.prisma.$queryRaw<{ company: string; n: bigint }[]>`

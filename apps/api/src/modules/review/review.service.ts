@@ -168,6 +168,7 @@ const BUCKET_LABELS: Record<string, string> = {
   NOT_DEVELOPMENT: 'Not a development role',
   DEVELOPMENT_WRONG_SPECIALIZATION: 'Genuine engineering, different specialization',
   TARGET_ROLE_TOO_SENIOR: 'Beyond your experience',
+  TARGET_ROLE_BELOW_LEVEL: 'Below your level (internship / trainee)',
   TARGET_ROLE_EXPERIENCE_STRETCH: 'Experience stretch',
   TARGET_ROLE_WEAK_STACK: 'Core-stack mismatch',
   AMBIGUOUS_NEEDS_REVIEW: 'Ambiguous',

@@ -99,6 +99,35 @@ describe('experienceVerdict — a band, not an equation', () => {
   it('allows a role with no stated requirement', () => {
     expect(experienceVerdict(classification({ minimumYears: null }), 2).eligible).toBe(true);
   });
+
+  it('rejects an internship as below a 2-year engineer — floor, not ceiling', () => {
+    const v = experienceVerdict(classification({ seniority: 'INTERN', minimumYears: null }), 2);
+    expect(v.eligible).toBe(false);
+    expect(v.belowLevel).toBe(true);
+    expect(v.reason).toMatch(/internship/i);
+  });
+
+  it('still admits an internship for someone with no experience yet', () => {
+    expect(experienceVerdict(classification({ seniority: 'INTERN', minimumYears: null }), 0).eligible).toBe(
+      true,
+    );
+  });
+
+  it('an intern role is excluded, not sent to review', () => {
+    const e = eligibility(
+      classification({
+        seniority: 'INTERN',
+        roleFamily: 'FULL_STACK',
+        minimumYears: null,
+        developmentConfidence: 90,
+        codingIntensity: 'PRIMARY',
+      }),
+      SUYASH,
+    );
+    expect(e.eligible).toBe(false);
+    expect(e.needsReview).toBe(false);
+    expect(e.code).toBe('TARGET_ROLE_BELOW_LEVEL');
+  });
 });
 
 describe('eligibility — the hard gate, from the nine false recommendations', () => {

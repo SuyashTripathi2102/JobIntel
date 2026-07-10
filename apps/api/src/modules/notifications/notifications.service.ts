@@ -143,6 +143,14 @@ export class NotificationsService {
       return false;
     }
 
+    // Already acted on it? Never tell someone to apply to a job they applied
+    // to (2026-07-10). SAVED means "later" and may still be nudged; anything
+    // past it means done.
+    if (await this.alreadyActedOn(match.user.id, match.jobId)) {
+      this.logger.log(`holding notification for "${match.job.title}" — already in your applications`);
+      return false;
+    }
+
     const decision: Decision = {
       verdict: 'APPLY',
       code: (match.verdictCode as Decision['code']) ?? 'TARGET_ROLE_ELIGIBLE',
@@ -174,6 +182,18 @@ export class NotificationsService {
       },
     });
     return true;
+  }
+
+  /**
+   * Has the user already acted on this job? SAVED is a bookmark, not an action,
+   * so it does not suppress a nudge — every later status does.
+   */
+  private async alreadyActedOn(userId: string, jobId: string): Promise<boolean> {
+    const application = await this.prisma.application.findUnique({
+      where: { userId_jobId: { userId, jobId } },
+      select: { status: true },
+    });
+    return application != null && application.status !== 'SAVED';
   }
 
   /**
