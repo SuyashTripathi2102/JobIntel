@@ -25,13 +25,42 @@ interface Contact {
   sharedTech: string[];
   via: string | null;
   publicMember: boolean;
+  contributions: number;
+  why: string[];
   status: Status;
   draft: string | null;
+}
+interface Pick {
+  id: string;
+  name: string;
+  role: Role;
+}
+interface Strategy {
+  primary: Pick | null;
+  secondary: Pick | null;
+  recruiterFallback: Pick | null;
+}
+interface Graph {
+  recruiters: number;
+  leaders: number;
+  engineers: number;
+  contactable: number;
+  total: number;
+}
+interface PlanStep {
+  step: number;
+  title: string;
+  detail: string;
+  stars: number;
+  href?: string;
 }
 interface Data {
   jobTitle: string;
   companyName: string;
   contacts: Contact[];
+  graph: Graph;
+  strategy: Strategy;
+  plan: PlanStep[];
   message: string | null;
 }
 
@@ -98,22 +127,91 @@ export default function ReferralsPage() {
         and send. <strong>One thoughtful message per person — never spam.</strong>
       </div>
 
+      {/* The play, not just the pile: best sequence to win this application. */}
+      {data.plan.length > 0 && (
+        <section className="mt-5 rounded-xl border border-neutral-800 bg-neutral-900 p-4">
+          <h2 className="text-sm font-medium uppercase tracking-wide text-neutral-400">
+            Your application success plan
+          </h2>
+          <ol className="mt-3 space-y-2.5">
+            {data.plan.map((s) => (
+              <li key={s.step} className="flex gap-3">
+                <span className="mt-0.5 flex h-5 w-5 flex-none items-center justify-center rounded-full bg-neutral-800 text-[11px] text-neutral-300">
+                  {s.step}
+                </span>
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2">
+                    {s.href ? (
+                      <Link href={s.href} className="text-[14px] font-medium text-sky-300 hover:underline">
+                        {s.title} →
+                      </Link>
+                    ) : (
+                      <span className="text-[14px] font-medium text-neutral-100">{s.title}</span>
+                    )}
+                    <span className="text-[11px] text-amber-300" title="How much this step moves your odds">
+                      {'★'.repeat(s.stars)}
+                      <span className="text-neutral-700">{'★'.repeat(5 - s.stars)}</span>
+                    </span>
+                  </div>
+                  <p className="text-[12px] text-neutral-400">{s.detail}</p>
+                </div>
+              </li>
+            ))}
+          </ol>
+          <p className="mt-2 text-[11px] text-neutral-500">★ = how much the step moves your odds. A quiet inbox never blocks you — the plan always ends in “apply anyway”.</p>
+        </section>
+      )}
+
+      {/* Company graph — who is even reachable here. */}
+      {data.graph.total > 0 && (
+        <div className="mt-4 flex flex-wrap gap-2 text-[12px]">
+          <GraphChip n={data.graph.recruiters} label="recruiter" />
+          <GraphChip n={data.graph.leaders} label="eng leader" />
+          <GraphChip n={data.graph.engineers} label="engineer" />
+          <GraphChip n={data.graph.contactable} label="reachable" accent />
+        </div>
+      )}
+
       {data.message && <p className="mt-5 text-neutral-400">{data.message}</p>}
 
       <div className="mt-5 space-y-4">
         {data.contacts.map((c) => (
-          <ContactCard key={c.id} c={c} onPatch={patchContact} />
+          <ContactCard key={c.id} c={c} tag={tagFor(c.id, data.strategy)} onPatch={patchContact} />
         ))}
       </div>
     </Shell>
   );
 }
 
+function tagFor(id: string, s: Strategy): string | null {
+  if (s.primary?.id === id) return 'Primary';
+  if (s.secondary?.id === id) return 'Secondary';
+  if (s.recruiterFallback?.id === id) return 'Recruiter fallback';
+  return null;
+}
+
+function GraphChip({ n, label, accent }: { n: number; label: string; accent?: boolean }) {
+  return (
+    <span
+      className={`rounded-full border px-2.5 py-1 ${
+        accent
+          ? 'border-emerald-800 bg-emerald-950/40 text-emerald-300'
+          : 'border-neutral-800 bg-neutral-900 text-neutral-300'
+      }`}
+    >
+      <b className="tabular-nums">{n}</b> {label}
+      {n === 1 ? '' : 's'}
+    </span>
+  );
+}
+
 function ContactCard({
   c,
+  tag,
   onPatch,
 }: {
   c: Contact;
+  tag: string | null;
   onPatch: (id: string, patch: Partial<Contact>) => void;
 }) {
   const [draft, setDraft] = useState(c.draft ?? '');
@@ -172,11 +270,22 @@ function ContactCard({
                 verified employee
               </span>
             )}
+            {tag && (
+              <span className="rounded-full border border-violet-700 bg-violet-950/50 px-2 py-0.5 text-[11px] font-medium text-violet-200">
+                {tag}
+              </span>
+            )}
             <span className="ml-auto text-[11px] tabular-nums text-neutral-500">
               match {c.priority}
             </span>
           </div>
-          <p className="mt-1 text-[13px] text-neutral-400">{c.reason}</p>
+          <ul className="mt-1.5 space-y-0.5">
+            {c.why.map((w, i) => (
+              <li key={i} className="text-[12.5px] text-neutral-300">
+                <span className="text-emerald-400">✓</span> {w}
+              </li>
+            ))}
+          </ul>
 
           {c.sharedTech.length > 0 && (
             <div className="mt-2 flex flex-wrap gap-1.5">

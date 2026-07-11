@@ -14,6 +14,13 @@ import type { ParsedResume } from '../resumes/resume-intelligence.service';
 import { discoverGithubPeople } from './github-people';
 import { rankReferrals, type ReferralRole } from './referral-ranking';
 import { referralDraftPrompt, type DraftPerson } from './referral-draft';
+import {
+  buildPlan,
+  buildStrategy,
+  companyGraph,
+  whyBullets,
+  type ContactLike,
+} from './outreach-strategy';
 
 /** How long a company's discovered shortlist stays fresh before we re-crawl. */
 const FRESH_MS = 14 * 24 * 60 * 60 * 1000;
@@ -61,7 +68,7 @@ export class ReferralsService {
     });
     const freshest = cached.reduce<number>((m, c) => Math.max(m, c.createdAt.getTime()), 0);
     if (cached.length > 0 && Date.now() - freshest < FRESH_MS) {
-      return this.result(job.title, companyName, cached);
+      return this.result(jobId, job.title, companyName, cached);
     }
 
     // Re-discover. Failures degrade to "no source" rather than erroring the page.
@@ -144,7 +151,7 @@ export class ReferralsService {
       this.logger.warn(`Referral discovery failed for ${companyName}: ${String(err)}`);
     }
 
-    return this.result(job.title, companyName, contacts);
+    return this.result(jobId, job.title, companyName, contacts);
   }
 
   /** Generate (or regenerate) the personalised outreach draft for one contact. */
@@ -236,13 +243,37 @@ export class ReferralsService {
 
   // ── internals ──
 
-  private result(jobTitle: string, companyName: string, contacts: ReferralContact[]) {
+  private result(
+    jobId: string,
+    jobTitle: string,
+    companyName: string,
+    rows: ReferralContact[],
+  ) {
+    const dtos = rows.map((c) => this.toDto(c));
+    const likes: ContactLike[] = dtos.map((c) => ({
+      id: c.id,
+      name: c.name,
+      role: c.role as ReferralRole,
+      priority: c.priority,
+      publicMember: c.publicMember,
+      sharedTech: c.sharedTech,
+      email: c.email,
+      blog: c.blog,
+      twitter: c.twitter,
+      contributions: c.contributions,
+    }));
+    const contacts = dtos.map((c, i) => ({ ...c, why: whyBullets(likes[i], companyName) }));
+    const strategy = buildStrategy(likes);
+    const primaryPriority = likes.reduce((m, l) => Math.max(m, l.priority), 0);
     return {
       jobTitle,
       companyName,
-      contacts: contacts.map((c) => this.toDto(c)),
+      contacts,
+      graph: companyGraph(likes),
+      strategy,
+      plan: buildPlan(strategy, { jobId, hasContacts: likes.length > 0, primaryPriority }),
       message:
-        contacts.length === 0
+        rows.length === 0
           ? `No public GitHub presence found for ${companyName}. Try the company's careers page or an engineering-blog author — those are the other honest, public routes to a referral.`
           : null,
     };
@@ -253,6 +284,7 @@ export class ReferralsService {
       sharedTech?: string[];
       viaRepos?: string[];
       publicMember?: boolean;
+      contributions?: number;
     };
     return {
       id: c.id,
@@ -271,6 +303,7 @@ export class ReferralsService {
       sharedTech: s.sharedTech ?? [],
       via: (s.viaRepos ?? [])[0] ?? null,
       publicMember: !!s.publicMember,
+      contributions: s.contributions ?? 0,
       status: c.status,
       draft: c.draft,
       contactedAt: c.contactedAt,
