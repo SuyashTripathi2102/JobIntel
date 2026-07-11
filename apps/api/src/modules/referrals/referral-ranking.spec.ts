@@ -67,6 +67,21 @@ describe('rankReferrals', () => {
     expect(r.sharedTech).toEqual([]);
   });
 
+  it('never crashes on a malformed skills list (undefined / non-string entries)', () => {
+    const skills = ['React', undefined, null, 42, 'Node.js'] as unknown as string[];
+    expect(() =>
+      rankReferrals([person({ login: 'e', bio: 'React and Node.js', publicMember: true })], {
+        companyName: 'Acme',
+        userSkills: skills,
+      }),
+    ).not.toThrow();
+    const [r] = rankReferrals([person({ login: 'e', bio: 'React and Node.js', publicMember: true })], {
+      companyName: 'Acme',
+      userSkills: skills,
+    });
+    expect(r.sharedTech).toEqual(expect.arrayContaining(['React', 'Node.js']));
+  });
+
   it('rewards a reachable public email over no contact path', () => {
     const withEmail = rankReferrals(
       [person({ login: 'a', publicMember: true, email: 'a@acme.dev' })],

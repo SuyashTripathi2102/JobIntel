@@ -220,11 +220,7 @@ export class ReferralsService {
         name: profile?.fullName ?? fallbackName ?? 'the candidate',
         headline: profile?.headline ?? null,
         years: profile?.totalYearsExperience ?? null,
-        topSkills: (profile?.skills ?? [])
-          .slice()
-          .sort((a, b) => (b.yearsOfUse ?? 0) - (a.yearsOfUse ?? 0))
-          .slice(0, 8)
-          .map((s) => s.name),
+        topSkills: skillNames(profile?.skills).slice(0, 8),
         standoutProject: pickProject(profile),
       },
       { title: job?.title ?? 'the open role', company: contact.companyName },
@@ -449,8 +445,27 @@ export class ReferralsService {
 
   private async userSkills(userId: string): Promise<string[]> {
     const profile = await this.activeProfile(userId);
-    return (profile?.skills ?? []).map((s) => s.name);
+    return skillNames(profile?.skills);
   }
+}
+
+/**
+ * The confirmed profile stores skills as a string[] (ResumeProfile), but the
+ * parsed profile uses {name}[] (ParsedResume). Handle both, and never emit an
+ * undefined — a single bad entry used to crash rankReferrals ('.trim' of
+ * undefined) and silently zero out every company's referrals.
+ */
+function skillNames(skills: unknown): string[] {
+  if (!Array.isArray(skills)) return [];
+  return skills
+    .map((s) =>
+      typeof s === 'string'
+        ? s
+        : s && typeof s === 'object' && 'name' in s
+          ? String((s as { name: unknown }).name ?? '')
+          : '',
+    )
+    .filter((s) => s.trim().length > 0);
 }
 
 /** The project with the richest stack — the one worth name-dropping in outreach. */

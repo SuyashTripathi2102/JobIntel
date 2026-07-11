@@ -44,6 +44,7 @@ function sharedTech(person: GitHubPerson, userSkills: string[]): string[] {
   const hay = `${person.bio ?? ''} ${person.company ?? ''} ${person.viaRepos.join(' ')}`;
   const out: string[] = [];
   for (const skill of userSkills) {
+    if (typeof skill !== 'string') continue; // never crash on a malformed profile entry
     const s = skill.trim();
     if (s.length < 2) continue;
     // token-boundary match so "react" doesn't hit "reactive"; allow .+#- in skill
