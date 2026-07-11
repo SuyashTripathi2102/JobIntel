@@ -50,11 +50,28 @@ export class ApiClient {
     return this.request('POST', `/internal/discovery/${companyId}/result`, result);
   }
 
-  bulkDiscover(
+  async bulkDiscover(
     source: string,
     candidates: CompanyCandidate[],
   ): Promise<{ created: number; merged: number }> {
-    return this.request('POST', '/internal/discovery/bulk', { source, candidates });
+    // The endpoint validates <=5000 items per request. A 24-city Places sweep
+    // sends ~6,000, so one POST 400s and the whole sweep inserts nothing
+    // (2026-07-11). Chunk it — smaller batches also keep each request fast and
+    // let a partial failure lose one chunk, not the run.
+    const CHUNK = 500;
+    let created = 0;
+    let merged = 0;
+    for (let i = 0; i < candidates.length; i += CHUNK) {
+      const batch = candidates.slice(i, i + CHUNK);
+      const res = await this.request<{ created: number; merged: number }>(
+        'POST',
+        '/internal/discovery/bulk',
+        { source, candidates: batch },
+      );
+      created += res.created;
+      merged += res.merged;
+    }
+    return { created, merged };
   }
 
   private async request<T>(method: string, path: string, body?: unknown): Promise<T> {
