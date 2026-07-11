@@ -27,9 +27,21 @@ interface Transferable {
   note: string;
 }
 
+interface KeywordItem {
+  keyword: string;
+  status: 'PRESENT' | 'VARIANT' | 'MISSING';
+  yourTerm?: string;
+}
+
 interface Detail {
   userYears: number | null;
   whatIf: { skill: string; newFit: number | null; delta: number }[];
+  atsKeywords: {
+    required: KeywordItem[];
+    preferred: KeywordItem[];
+    addExact: string[];
+    requiredMatchPct: number | null;
+  } | null;
   company: {
     name: string;
     confidence: number;
@@ -169,6 +181,7 @@ export default function JobPage() {
   const c = detail?.classification;
   const spec = detail?.specialization;
   const co = detail?.company;
+  const ats = detail?.atsKeywords;
   const vstyle = (v?.verdict && VERDICT_STYLE[v.verdict]) || VERDICT_STYLE.SKIP;
   const experience = c
     ? c.minimumYears == null
@@ -422,6 +435,54 @@ export default function JobPage() {
         </section>
       )}
 
+      {/* ATS KEYWORD OPTIMIZER — beat the literal keyword filter. */}
+      {ats && (ats.required.length > 0 || ats.preferred.length > 0) && (
+        <section className="mt-4 rounded-xl border border-neutral-800 bg-neutral-900 p-4">
+          <div className="flex items-baseline justify-between">
+            <h2 className="text-sm font-medium uppercase tracking-wide text-neutral-400">
+              ATS keyword check
+            </h2>
+            {ats.requiredMatchPct != null && (
+              <span className="text-sm font-semibold tabular-nums text-neutral-200">
+                {ats.requiredMatchPct}% exact-match
+              </span>
+            )}
+          </div>
+          <p className="mt-1 text-[11px] text-neutral-500">
+            ATS filters often match the JD&apos;s exact wording. This checks your resume text
+            literally — not just whether you have the skill.
+          </p>
+
+          {ats.addExact.length > 0 && (
+            <div className="mt-3 rounded-lg border border-amber-900/60 bg-amber-950/20 p-3">
+              <p className="text-xs text-amber-300">
+                <strong className="font-medium">Add these exact phrases to your resume</strong> before
+                you apply:
+              </p>
+              <div className="mt-1.5 flex flex-wrap gap-1.5">
+                {ats.addExact.map((k) => (
+                  <span
+                    key={k}
+                    className="rounded-md border border-amber-800 bg-amber-950/60 px-2 py-0.5 font-mono text-xs text-amber-200"
+                  >
+                    {k}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+
+          <div className="mt-4 space-y-1.5 text-sm">
+            {ats.required.map((k) => (
+              <KeywordRow key={`r-${k.keyword}`} item={k} required />
+            ))}
+            {ats.preferred.map((k) => (
+              <KeywordRow key={`p-${k.keyword}`} item={k} required={false} />
+            ))}
+          </div>
+        </section>
+      )}
+
       {/* COMPANY HEALTH — data we already have, surfaced. */}
       {co && (
         <section className="mt-4 rounded-xl border border-neutral-800 bg-neutral-900 p-4">
@@ -543,6 +604,33 @@ export default function JobPage() {
         )}
       </section>
     </Shell>
+  );
+}
+
+function KeywordRow({ item, required }: { item: KeywordItem; required: boolean }) {
+  const style =
+    item.status === 'PRESENT'
+      ? { mark: '✓', color: 'text-emerald-400', note: 'on your resume' }
+      : item.status === 'VARIANT'
+        ? {
+            mark: '~',
+            color: 'text-amber-400',
+            note: item.yourTerm ? `you wrote “${item.yourTerm}” — add this exact phrase` : 'add this exact phrase',
+          }
+        : { mark: '✕', color: 'text-neutral-500', note: 'missing' };
+  return (
+    <div className="flex items-center justify-between gap-3">
+      <span className="flex items-center gap-2">
+        <span className={`text-base leading-none ${style.color}`}>{style.mark}</span>
+        <span className="font-mono text-xs text-neutral-200">{item.keyword}</span>
+        {required && (
+          <span className="rounded bg-neutral-800 px-1 text-[9px] uppercase tracking-wide text-neutral-500">
+            required
+          </span>
+        )}
+      </span>
+      <span className={`text-[11px] ${style.color}`}>{style.note}</span>
+    </div>
   );
 }
 

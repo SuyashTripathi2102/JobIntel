@@ -10,6 +10,7 @@ import type { ParsedResume } from '../resumes/resume-intelligence.service';
 import { CLASSIFIER_VERSION, JobClassifierService } from './job-classifier.service';
 import { DEFAULT_ROLE_PROFILE, eligibility, specializationBreakdown } from './role-classification';
 import type { JobClassification } from './role-classification';
+import { atsKeywordAudit } from './ats-keywords';
 
 const SIMILARITY_TOP_K = 40; // pgvector prefilter size
 const LLM_SCORE_TOP_N = 15; // how many get deep LLM scoring
@@ -787,11 +788,12 @@ export class MatchingService {
     });
 
     // Confirmed skills drive the specialization breakdown, so it matches the
-    // number stored on the match rather than a hardcoded stack.
+    // number stored on the match rather than a hardcoded stack. rawText drives
+    // the ATS keyword audit — an ATS matches the literal document, not skills.
     const version = activeVersionId
       ? await this.prisma.resumeVersion.findUnique({
           where: { id: activeVersionId },
-          select: { confirmedProfile: true },
+          select: { confirmedProfile: true, parsedJson: true },
         })
       : null;
     const confirmedSkills =
@@ -799,6 +801,7 @@ export class MatchingService {
     const userYears =
       (version?.confirmedProfile as { totalYearsExperience?: number } | null)
         ?.totalYearsExperience ?? null;
+    const resumeText = (version?.parsedJson as { rawText?: string } | null)?.rawText ?? '';
 
     const jdSkills = c
       ? ({ requiredSkills: c.requiredSkills, specialization: c.specializations } as JobClassification)
@@ -825,9 +828,17 @@ export class MatchingService {
             .slice(0, 5)
         : [];
 
+    // ATS keyword audit — literal-match the JD's exact wording against the
+    // resume text, so the user adds the phrases a keyword filter looks for.
+    const atsKeywords =
+      c && resumeText
+        ? atsKeywordAudit(c.requiredSkills, c.preferredSkills, resumeText, confirmedSkills)
+        : null;
+
     return {
       userYears,
       whatIf,
+      atsKeywords,
       company: job?.company
         ? {
             name: job.company.name,
