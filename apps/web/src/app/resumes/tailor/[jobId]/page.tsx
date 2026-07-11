@@ -18,6 +18,7 @@ interface Tailored {
   jobTitle: string;
   company: string;
   masterHtml: string;
+  masterSource: 'custom' | 'generated';
   companyHtml: string;
   changes: Change[];
   missingRequired: string[];
@@ -67,13 +68,19 @@ export default function TailorPage() {
       .catch((e) => setError(String(e)));
   }, [jobId]);
 
+  // Custom master is a full HTML document (its own styling) — print it verbatim.
+  // Generated master is a fragment that needs our ATS-safe stylesheet wrapped in.
+  function previewDoc(d: Tailored): string {
+    return d.masterSource === 'custom'
+      ? d.companyHtml
+      : `<!doctype html><html><head><meta charset="utf-8"><title>${d.company} — Resume</title><style>body{margin:0}${RESUME_CSS}</style></head><body>${d.companyHtml}</body></html>`;
+  }
+
   function downloadPrint() {
     if (!data) return;
     const w = window.open('', '_blank');
     if (!w) return;
-    w.document.write(
-      `<!doctype html><html><head><title>${data.company} — Resume</title><style>body{margin:0}${RESUME_CSS}</style></head><body>${data.companyHtml}</body></html>`,
-    );
+    w.document.write(previewDoc(data));
     w.document.close();
     w.focus();
     setTimeout(() => w.print(), 300);
@@ -104,6 +111,27 @@ export default function TailorPage() {
         <Link href={`/jobs/${jobId}`} className="text-sm text-neutral-500 hover:text-neutral-300">
           ← Back to job
         </Link>
+      </div>
+
+      {/* Which master is this tailored from? */}
+      <div
+        className={`mt-3 rounded-lg border px-3 py-2 text-[12px] ${
+          data.masterSource === 'custom'
+            ? 'border-emerald-900/50 bg-emerald-950/20 text-emerald-200'
+            : 'border-amber-900/40 bg-amber-950/20 text-amber-200'
+        }`}
+      >
+        {data.masterSource === 'custom' ? (
+          <>Tailored from <strong>your own resume HTML</strong> — your real formatting is preserved.</>
+        ) : (
+          <>
+            Tailored from an <strong>auto-generated</strong> master (loses your grouping, links &
+            achievements).{' '}
+            <Link href="/resumes/master" className="underline hover:text-white">
+              Use your own resume HTML →
+            </Link>
+          </>
+        )}
       </div>
 
       {/* Three audiences, three scores. */}
@@ -155,10 +183,10 @@ export default function TailorPage() {
         Opens a clean print view — choose <b>Save as PDF</b>. It embeds a real text layer, so it
         stays ATS-readable.
       </p>
-      <style>{RESUME_CSS}</style>
-      <div
-        className="mt-3 overflow-hidden rounded-xl border border-neutral-700"
-        dangerouslySetInnerHTML={{ __html: data.companyHtml }}
+      <iframe
+        title="Tailored resume preview"
+        srcDoc={previewDoc(data)}
+        className="mt-3 h-[900px] w-full overflow-hidden rounded-xl border border-neutral-700 bg-white"
       />
     </Shell>
   );

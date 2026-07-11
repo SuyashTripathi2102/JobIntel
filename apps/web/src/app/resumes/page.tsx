@@ -119,9 +119,14 @@ export default function Resumes() {
               until you confirm and activate it.
             </p>
           </div>
-          <a href="/" className="text-sm text-neutral-400 hover:text-neutral-200">
-            Mission Control
-          </a>
+          <div className="flex items-center gap-4">
+            <a href="/resumes/master" className="text-sm text-sky-300 hover:text-sky-200">
+              Master resume →
+            </a>
+            <a href="/" className="text-sm text-neutral-400 hover:text-neutral-200">
+              Mission Control
+            </a>
+          </div>
         </header>
 
         <label

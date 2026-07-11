@@ -13,7 +13,7 @@ import { randomUUID } from 'crypto';
 import { PDFParse } from 'pdf-parse';
 import { checkAts } from './ats-check';
 import { classifySkillOrigins, isNamedInResume, manuallyAdded } from './skill-provenance';
-import { buildMasterHtml, scoreResume, tailorForJob } from './resume-builder';
+import { buildMasterHtml, scoreResume, tailorForJob, type ResumeChange } from './resume-builder';
 import { atsKeywordAudit } from '../matching/ats-keywords';
 import { MatchingService } from '../matching/matching.service';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -202,7 +202,63 @@ export class ResumesService {
    * stored in the Resume Library. PDF is produced client-side (print), so the
    * HTML stays the source of truth.
    */
+  /**
+   * The master resume — the user's canonical HTML if they've set one (source of
+   * truth, preserving their real formatting), else generated from the confirmed
+   * profile. `source` lets the UI render a full custom document vs a styled
+   * fragment, and tells the user which they're looking at.
+   */
+  async getMaster(userId: string): Promise<{ html: string; source: 'custom' | 'generated' }> {
+    const resume = await this.prisma.resume.findFirst({
+      where: { userId, isPrimary: true },
+      select: { masterHtml: true },
+    });
+    if (resume?.masterHtml) return { html: resume.masterHtml, source: 'custom' };
+
+    const version = await this.prisma.resumeVersion.findFirst({
+      where: { resume: { userId, isPrimary: true }, activatedAt: { not: null } },
+      orderBy: { versionNumber: 'desc' },
+      select: { confirmedProfile: true },
+    });
+    const profile = version?.confirmedProfile as ResumeProfile | null;
+    if (!profile) {
+      throw new BadRequestException('Upload and activate a resume first, then set your master.');
+    }
+    return { html: buildMasterHtml(profile), source: 'generated' };
+  }
+
+  /** Store the user's own resume HTML as the master (source of truth for tailoring). */
+  async setMaster(userId: string, html: string): Promise<{ ok: true; source: 'custom' }> {
+    if (!html || html.trim().length < 40) {
+      throw new BadRequestException('Paste your resume HTML (the full document).');
+    }
+    if (html.length > 400_000) {
+      throw new BadRequestException('That HTML is unusually large — paste just the resume document.');
+    }
+    const resume = await this.prisma.resume.findFirst({
+      where: { userId, isPrimary: true },
+      select: { id: true },
+    });
+    if (!resume) throw new BadRequestException('Upload a resume first, then set your master HTML.');
+    await this.prisma.resume.update({ where: { id: resume.id }, data: { masterHtml: html } });
+    return { ok: true, source: 'custom' };
+  }
+
+  /** Revert to the profile-generated master (clears the custom HTML). */
+  async clearMaster(userId: string): Promise<{ ok: true; source: 'generated' }> {
+    const resume = await this.prisma.resume.findFirst({
+      where: { userId, isPrimary: true },
+      select: { id: true },
+    });
+    if (resume) await this.prisma.resume.update({ where: { id: resume.id }, data: { masterHtml: null } });
+    return { ok: true, source: 'generated' };
+  }
+
   async tailorResume(userId: string, jobId: string) {
+    const resume = await this.prisma.resume.findFirst({
+      where: { userId, isPrimary: true },
+      select: { masterHtml: true },
+    });
     const version = await this.prisma.resumeVersion.findFirst({
       where: { resume: { userId, isPrimary: true }, activatedAt: { not: null } },
       orderBy: { versionNumber: 'desc' },
@@ -228,9 +284,24 @@ export class ResumesService {
     const required = classification?.requiredSkills ?? [];
     const preferred = classification?.preferredSkills ?? [];
 
-    const masterHtml = buildMasterHtml(profile);
+    const custom = resume?.masterHtml ?? null;
+    const masterSource: 'custom' | 'generated' = custom ? 'custom' : 'generated';
+    const masterHtml = custom ?? buildMasterHtml(profile);
     const audit = atsKeywordAudit(required, preferred, resumeText, profile.skills);
-    const { companyHtml, changes } = tailorForJob(masterHtml, audit.addExact);
+
+    let companyHtml: string;
+    let changes: ResumeChange[];
+    if (custom) {
+      // Never auto-rewrite the user's own HTML — the layout is theirs. Surface
+      // the exact ATS phrasings to add as SUGGESTIONS; they edit the master.
+      companyHtml = custom;
+      changes = audit.addExact.map((k) => ({
+        type: 'ADD_KEYWORD' as const,
+        detail: `Add the exact ATS phrase “${k}” to your skills line`,
+      }));
+    } else {
+      ({ companyHtml, changes } = tailorForJob(masterHtml, audit.addExact));
+    }
 
     // Scores before (master) and after (with the added keywords in the text).
     const before = scoreResume(profile, required, preferred, resumeText);
@@ -266,6 +337,7 @@ export class ResumesService {
       jobTitle: job.title,
       company: job.company.name,
       masterHtml,
+      masterSource,
       companyHtml,
       changes,
       missingRequired: audit.missingRequired,

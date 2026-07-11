@@ -31,6 +31,29 @@ export class ResumesController {
     return this.resumesService.list(user.id);
   }
 
+  // ── Master resume (the source of truth for tailoring) ──
+  // Declared BEFORE the ':id' routes so "master" isn't parsed as a resume id.
+
+  /** The master resume HTML (your own if set, else generated from your profile). */
+  @Get('master')
+  getMaster(@CurrentUser() user: AuthenticatedUser) {
+    return this.resumesService.getMaster(user.id);
+  }
+
+  /** Set your own resume HTML as the master — the source of truth for tailoring. */
+  @Put('master')
+  @HttpCode(HttpStatus.OK)
+  setMaster(@CurrentUser() user: AuthenticatedUser, @Body() body: { html: string }) {
+    return this.resumesService.setMaster(user.id, body?.html ?? '');
+  }
+
+  /** Revert to the profile-generated master. */
+  @Delete('master')
+  @HttpCode(HttpStatus.OK)
+  clearMaster(@CurrentUser() user: AuthenticatedUser) {
+    return this.resumesService.clearMaster(user.id);
+  }
+
   @Get(':id')
   get(@CurrentUser() user: AuthenticatedUser, @Param('id') id: string) {
     return this.resumesService.get(user.id, id);

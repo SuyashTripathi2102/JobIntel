@@ -188,6 +188,12 @@ model Resume {
   userId    String
   title     String   @default("My Resume")
   isPrimary Boolean  @default(false) // the one used for matching by default
+  // The user's canonical resume as editable HTML — the SOURCE OF TRUTH for
+  // tailoring. When set, tailoring derives company resumes from THIS (preserving
+  // the user's real formatting, grouped skills, sub-projects, links, achievements)
+  // instead of regenerating a lossy copy from the PDF parse. Null → fall back to
+  // buildMasterHtml(confirmedProfile).
+  masterHtml String?
   createdAt DateTime @default(now())
 
   user     User            @relation(fields: [userId], references: [id], onDelete: Cascade)
