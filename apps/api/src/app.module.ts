@@ -23,6 +23,7 @@ import { JwtAuthGuard } from './modules/auth/guards/jwt-auth.guard';
 import { RolesGuard } from './common/guards/roles.guard';
 import { ReferralsModule } from './modules/referrals/referrals.module';
 import { ResumesModule } from './modules/resumes/resumes.module';
+import { TodayModule } from './modules/today/today.module';
 import { StorageModule } from './modules/storage/storage.module';
 import { UsersModule } from './modules/users/users.module';
 
@@ -53,6 +54,7 @@ import { UsersModule } from './modules/users/users.module';
     ApplicationsModule,
     ReviewModule,
     ReferralsModule,
+    TodayModule,
   ],
   controllers: [AppController],
   providers: [

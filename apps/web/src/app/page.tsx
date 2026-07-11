@@ -194,6 +194,9 @@ export default function MissionControl() {
           <p className="text-sm text-neutral-400">{today}</p>
         </div>
         <nav className="flex items-center gap-4">
+          <a href="/today" className="text-sm font-medium text-sky-300 hover:text-sky-200">
+            Today
+          </a>
           <a href="/resumes" className="text-sm text-neutral-400 hover:text-neutral-200">
             Resume
           </a>

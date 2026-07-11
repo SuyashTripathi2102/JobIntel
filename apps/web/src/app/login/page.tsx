@@ -17,7 +17,7 @@ export default function LoginPage() {
     setError(null);
     try {
       await login(email, password);
-      router.push('/');
+      router.push('/today');
     } catch {
       setError('Invalid email or password');
     } finally {
