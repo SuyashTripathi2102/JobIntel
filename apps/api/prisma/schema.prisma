@@ -653,6 +653,11 @@ model ReferralContact {
   status      String    @default("SUGGESTED")
   contactedAt DateTime?
   repliedAt   DateTime?
+  // Follow-up cadence (the Outreach Engine): how many nudges the user has logged
+  // and when the last one went out, so CareerOS can surface "due for a follow-up"
+  // without ever sending anything itself.
+  followUpCount  Int       @default(0)
+  lastFollowUpAt DateTime?
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
 

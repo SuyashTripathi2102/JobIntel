@@ -125,9 +125,14 @@ export default function ReferralsPage() {
           <h1 className="text-2xl font-semibold tracking-tight">Ways in — {data.companyName}</h1>
           <p className="text-sm text-neutral-400">{data.jobTitle}</p>
         </div>
-        <Link href={`/jobs/${jobId}`} className="text-sm text-neutral-500 hover:text-neutral-300">
-          ← Back to job
-        </Link>
+        <div className="flex items-center gap-4">
+          <Link href="/outreach" className="text-sm text-sky-300 hover:text-sky-200">
+            Outreach inbox →
+          </Link>
+          <Link href={`/jobs/${jobId}`} className="text-sm text-neutral-500 hover:text-neutral-300">
+            ← Back to job
+          </Link>
+        </div>
       </div>
 
       {/* The ethic, stated plainly — this is a referral tool, not a spam cannon. */}

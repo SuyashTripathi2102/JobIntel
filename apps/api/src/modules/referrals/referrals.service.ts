@@ -24,6 +24,7 @@ import {
   type ContactLike,
 } from './outreach-strategy';
 import { discoverCompanyChannels, type CompanyChannels } from './company-contacts';
+import { followUpPrompt, nextOutreachAction } from './referral-followup';
 
 /** How long a company's discovered shortlist stays fresh before we re-crawl. */
 const FRESH_MS = 14 * 24 * 60 * 60 * 1000;
@@ -269,6 +270,78 @@ export class ReferralsService {
     return this.toDto(updated);
   }
 
+  /** The outreach CRM: every contact you've engaged, "needs action" first. */
+  async outreachInbox(userId: string) {
+    const rows = await this.prisma.referralContact.findMany({
+      where: { userId, status: { in: ['DRAFTED', 'CONTACTED', 'REPLIED'] } },
+    });
+    const items = rows
+      .map((c) => {
+        const dto = this.toDto(c);
+        return { ...dto, companyName: c.companyName, jobId: c.jobId };
+      })
+      // Due first, then by urgency, then by how long they've been waiting.
+      .sort(
+        (a, b) =>
+          Number(b.nextAction.due) - Number(a.nextAction.due) ||
+          b.nextAction.urgency - a.nextAction.urgency ||
+          (b.nextAction.daysSince ?? 0) - (a.nextAction.daysSince ?? 0),
+      );
+    return {
+      dueCount: items.filter((i) => i.nextAction.due).length,
+      total: items.length,
+      items,
+    };
+  }
+
+  /** Draft a short, polite follow-up nudge for a contact you've already messaged. */
+  async generateFollowUp(userId: string, contactId: string) {
+    const contact = await this.prisma.referralContact.findFirst({
+      where: { id: contactId, userId },
+    });
+    if (!contact) throw new NotFoundException('Contact not found');
+
+    const job = contact.jobId
+      ? await this.prisma.job.findUnique({ where: { id: contact.jobId }, select: { title: true } })
+      : null;
+    const userName =
+      (await this.activeProfile(userId))?.fullName ??
+      (await this.prisma.user.findUnique({ where: { id: userId }, select: { name: true } }))?.name ??
+      'the candidate';
+
+    const { system, prompt } = followUpPrompt(
+      { name: userName },
+      { title: job?.title ?? 'the open role', company: contact.companyName },
+      { name: contact.name, role: contact.role as ReferralRole },
+      contact.followUpCount + 1,
+    );
+    const out = await this.llm.generateJson<{ subject: string; body: string }>(prompt, {
+      system,
+      temperature: 0.5,
+      maxOutputTokens: 400,
+    });
+    return { subject: out.subject, body: out.body, draft: `Subject: ${out.subject}\n\n${out.body}` };
+  }
+
+  /** Record that the user actually sent a follow-up (advances the cadence). */
+  async logFollowUp(userId: string, contactId: string) {
+    const contact = await this.prisma.referralContact.findFirst({
+      where: { id: contactId, userId },
+    });
+    if (!contact) throw new NotFoundException('Contact not found');
+    const updated = await this.prisma.referralContact.update({
+      where: { id: contact.id },
+      data: {
+        followUpCount: { increment: 1 },
+        lastFollowUpAt: new Date(),
+        // Logging a follow-up implies contact was made; never downgrade a reply.
+        ...(contact.status === 'REPLIED' ? {} : { status: 'CONTACTED' }),
+        ...(contact.contactedAt ? {} : { contactedAt: new Date() }),
+      },
+    });
+    return this.toDto(updated);
+  }
+
   // ── internals ──
 
   private result(
@@ -350,6 +423,14 @@ export class ReferralsService {
       status: c.status,
       draft: c.draft,
       contactedAt: c.contactedAt,
+      followUpCount: c.followUpCount,
+      nextAction: nextOutreachAction({
+        status: c.status,
+        contactedAt: c.contactedAt,
+        repliedAt: c.repliedAt,
+        followUpCount: c.followUpCount,
+        lastFollowUpAt: c.lastFollowUpAt,
+      }),
     };
   }
 

@@ -17,6 +17,26 @@ export class ReferralsController {
     return this.referrals.forJob(user.id, jobId);
   }
 
+  /** Outreach CRM: everyone you've engaged, "needs a nudge today" first. */
+  @Get('outreach')
+  outreach(@CurrentUser() user: AuthenticatedUser) {
+    return this.referrals.outreachInbox(user.id);
+  }
+
+  /** Draft a short follow-up nudge — you review and send it. */
+  @Post(':id/followup')
+  @HttpCode(HttpStatus.OK)
+  followUp(@CurrentUser() user: AuthenticatedUser, @Param('id') id: string) {
+    return this.referrals.generateFollowUp(user.id, id);
+  }
+
+  /** Record that you sent a follow-up (advances the cadence). */
+  @Post(':id/followup/logged')
+  @HttpCode(HttpStatus.OK)
+  followUpLogged(@CurrentUser() user: AuthenticatedUser, @Param('id') id: string) {
+    return this.referrals.logFollowUp(user.id, id);
+  }
+
   /** Draft a personalised outreach message for one contact — you review & send it. */
   @Post(':id/draft')
   @HttpCode(HttpStatus.OK)
