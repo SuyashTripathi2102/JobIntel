@@ -70,6 +70,12 @@ export class ResumesController {
     return this.resumesService.profile(user.id, versionId);
   }
 
+  /** Tailor the master resume to one job: company HTML + diff + 3 scores. */
+  @Get('tailor/:jobId')
+  tailor(@CurrentUser() user: AuthenticatedUser, @Param('jobId') jobId: string) {
+    return this.resumesService.tailorResume(user.id, jobId);
+  }
+
   /** Save corrections. Warns about skills absent from the resume, never blocks. */
   @Put('versions/:versionId/profile')
   saveProfile(

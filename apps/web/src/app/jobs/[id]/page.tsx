@@ -622,6 +622,12 @@ export default function JobPage() {
         >
           {tracked ? '✓ Tracked' : 'I applied'}
         </button>
+        <Link
+          href={`/resumes/tailor/${id}`}
+          className="rounded-lg border border-sky-800 bg-sky-950/40 px-4 py-2 font-medium text-sky-200 hover:bg-sky-900/40"
+        >
+          📄 Tailor my resume
+        </Link>
       </div>
 
       {/* CLASSIFICATION FACTS */}

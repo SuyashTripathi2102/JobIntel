@@ -136,6 +136,7 @@ model User {
   notifications Notification[]
   reviewFeedback JobReviewFeedback[]
   careerPreferences CareerPreference[]
+  companyResumes    CompanyResume[]
 
   @@map("users")
 }
@@ -368,6 +369,7 @@ model Job {
   applications Application[]
   classifications JobClassification[]
   reviewFeedback  JobReviewFeedback[]
+  companyResumes  CompanyResume[]
 
   // Dedupe guarantee: a recrawl updates the existing row instead of inserting.
   @@unique([companyId, externalId])
@@ -582,6 +584,33 @@ model CareerPreference {
 
   @@unique([userId, discipline])
   @@map("career_preferences")
+}
+
+/**
+ * A resume tailored to one job — the Resume Library. The master resume is
+ * generated from the confirmed profile; this stores the company-specific
+ * transform with its three-audience scores, so CareerOS can later learn which
+ * versions convert (via the linked application's outcome).
+ */
+model CompanyResume {
+  id             String   @id @default(cuid())
+  userId         String
+  jobId          String
+  companyName    String
+  html           String // the company-tailored HTML — the source, PDF is output
+  atsScore       Int?
+  recruiterScore Int?
+  hmScore        Int?
+  changes        Json? // [{ type, detail }] applied vs the master
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  job  Job  @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, jobId])
+  @@index([userId])
+  @@map("company_resumes")
 }
 
 model JobReviewFeedback {

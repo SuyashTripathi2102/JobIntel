@@ -13,6 +13,8 @@ import { randomUUID } from 'crypto';
 import { PDFParse } from 'pdf-parse';
 import { checkAts } from './ats-check';
 import { classifySkillOrigins, isNamedInResume, manuallyAdded } from './skill-provenance';
+import { buildMasterHtml, scoreResume, tailorForJob } from './resume-builder';
+import { atsKeywordAudit } from '../matching/ats-keywords';
 import { MatchingService } from '../matching/matching.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { StorageService } from '../storage/storage.service';
@@ -190,6 +192,84 @@ export class ResumesService {
       projects: structured.projects,
       education: structured.education,
       summaryForMatching: structured.summaryForMatching,
+    };
+  }
+
+  /**
+   * The resume-tailoring pipeline for one job. Master HTML (from the confirmed
+   * profile — real bullets, never invented) → company transform (exact ATS
+   * keywords the user already has) → three-audience scores before/after →
+   * stored in the Resume Library. PDF is produced client-side (print), so the
+   * HTML stays the source of truth.
+   */
+  async tailorResume(userId: string, jobId: string) {
+    const version = await this.prisma.resumeVersion.findFirst({
+      where: { resume: { userId, isPrimary: true }, activatedAt: { not: null } },
+      orderBy: { versionNumber: 'desc' },
+      select: { confirmedProfile: true, parsedJson: true },
+    });
+    const profile = version?.confirmedProfile as ResumeProfile | null;
+    if (!profile) {
+      throw new BadRequestException('Activate a reviewed resume before tailoring it to a job');
+    }
+    const resumeText = (version?.parsedJson as { rawText?: string } | null)?.rawText ?? '';
+
+    const job = await this.prisma.job.findUnique({
+      where: { id: jobId },
+      select: { title: true, company: { select: { name: true } } },
+    });
+    if (!job) throw new NotFoundException('Job not found');
+
+    const classification = await this.prisma.jobClassification.findFirst({
+      where: { jobId },
+      orderBy: { classifierVersion: 'desc' },
+      select: { requiredSkills: true, preferredSkills: true },
+    });
+    const required = classification?.requiredSkills ?? [];
+    const preferred = classification?.preferredSkills ?? [];
+
+    const masterHtml = buildMasterHtml(profile);
+    const audit = atsKeywordAudit(required, preferred, resumeText, profile.skills);
+    const { companyHtml, changes } = tailorForJob(masterHtml, audit.addExact);
+
+    // Scores before (master) and after (with the added keywords in the text).
+    const before = scoreResume(profile, required, preferred, resumeText);
+    const after = scoreResume(
+      profile,
+      required,
+      preferred,
+      `${resumeText} ${audit.addExact.join(' ')}`,
+    );
+
+    await this.prisma.companyResume.upsert({
+      where: { userId_jobId: { userId, jobId } },
+      create: {
+        userId,
+        jobId,
+        companyName: job.company.name,
+        html: companyHtml,
+        atsScore: after.ats,
+        recruiterScore: after.recruiter,
+        hmScore: after.hiringManager,
+        changes: changes as unknown as Prisma.InputJsonValue,
+      },
+      update: {
+        html: companyHtml,
+        atsScore: after.ats,
+        recruiterScore: after.recruiter,
+        hmScore: after.hiringManager,
+        changes: changes as unknown as Prisma.InputJsonValue,
+      },
+    });
+
+    return {
+      jobTitle: job.title,
+      company: job.company.name,
+      masterHtml,
+      companyHtml,
+      changes,
+      missingRequired: audit.missingRequired,
+      scores: { before, after },
     };
   }
 
