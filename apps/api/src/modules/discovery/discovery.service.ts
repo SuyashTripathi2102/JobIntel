@@ -100,29 +100,42 @@ export class DiscoveryService {
 
       const monitorable =
         detected?.identifier && CRAWLABLE_PROVIDERS.includes(detected.provider);
-      await this.prisma.company.create({
-        data: {
-          name: c.name,
-          website: c.website ?? undefined,
-          careerPageUrl: c.atsHintUrl ?? undefined,
-          atsProvider: detected?.identifier ? detected.provider : AtsProvider.UNKNOWN,
-          atsIdentifier: detected?.identifier ?? undefined,
-          industry: c.industry ?? undefined,
-          country: c.country ?? undefined,
-          city: c.city ?? undefined,
-          teamSize: c.teamSize ?? undefined,
-          description: c.description ?? undefined,
-          discoverySource: source,
-          discoveryStage: monitorable ? DiscoveryStage.MONITORED : DiscoveryStage.DISCOVERED,
-          confidence: computeConfidence({
-            websiteVerified: false,
-            atsDetected: !!detected?.identifier,
-          }),
-          confidenceSignals: { atsDetected: !!detected?.identifier } as object,
-          nextCrawlAt: new Date(), // monitorable ones get crawled on the next tick
-        },
-      });
-      created++;
+      try {
+        await this.prisma.company.create({
+          data: {
+            name: c.name,
+            website: c.website ?? undefined,
+            careerPageUrl: c.atsHintUrl ?? undefined,
+            atsProvider: detected?.identifier ? detected.provider : AtsProvider.UNKNOWN,
+            atsIdentifier: detected?.identifier ?? undefined,
+            industry: c.industry ?? undefined,
+            country: c.country ?? undefined,
+            city: c.city ?? undefined,
+            teamSize: c.teamSize ?? undefined,
+            description: c.description ?? undefined,
+            discoverySource: source,
+            discoveryStage: monitorable ? DiscoveryStage.MONITORED : DiscoveryStage.DISCOVERED,
+            confidence: computeConfidence({
+              websiteVerified: false,
+              atsDetected: !!detected?.identifier,
+            }),
+            confidenceSignals: { atsDetected: !!detected?.identifier } as object,
+            nextCrawlAt: new Date(), // monitorable ones get crawled on the next tick
+          },
+        });
+        created++;
+      } catch (err) {
+        // Places returns the same website for many differently-named listings
+        // (franchises, SEO doorway pages, shared domains). website is UNIQUE, so
+        // the host-substring dedup above can miss a collision the DB then
+        // rejects. That is a duplicate, not a batch-killer — skip it and go on.
+        // Before the guard, one P2002 aborted an entire 6,102-company sweep.
+        if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
+          merged++;
+          continue;
+        }
+        throw err;
+      }
     }
 
     this.logger.log(`bulk-discover[${source}]: ${created} new, ${merged} merged`);
@@ -207,29 +220,41 @@ export class DiscoveryService {
     else if (result.websiteVerified) stage = DiscoveryStage.WEBSITE_VERIFIED;
     else stage = DiscoveryStage.UNRESOLVABLE; // dead website — monthly retry
 
-    await this.prisma.company.update({
-      where: { id: companyId },
-      data: {
-        discoveryStage: stage,
-        lastProbedAt: new Date(),
-        website: result.website ?? company.website,
-        careerPageUrl: result.careerPageUrl ?? company.careerPageUrl,
-        ...(monitorable
-          ? {
-              atsProvider: atsProvider!,
-              atsIdentifier: result.atsIdentifier!,
-              crawlTier: CrawlTier.WARM,
-              nextCrawlAt: new Date(), // first crawl on the next 15-min tick
-            }
-          : {}),
-        description: company.description ?? result.metadata?.description ?? undefined,
-        githubOrg: company.githubOrg ?? result.metadata?.githubOrg ?? undefined,
-        engineeringBlogUrl:
-          company.engineeringBlogUrl ?? result.metadata?.blogUrl ?? undefined,
-        confidence: computeConfidence(signals),
-        confidenceSignals: { ...signals, probeLog: result.probeLog } as object,
-      },
-    });
+    const data: Prisma.CompanyUpdateInput = {
+      discoveryStage: stage,
+      lastProbedAt: new Date(),
+      website: result.website ?? company.website,
+      careerPageUrl: result.careerPageUrl ?? company.careerPageUrl,
+      ...(monitorable
+        ? {
+            atsProvider: atsProvider!,
+            atsIdentifier: result.atsIdentifier!,
+            crawlTier: CrawlTier.WARM,
+            nextCrawlAt: new Date(), // first crawl on the next 15-min tick
+          }
+        : {}),
+      description: company.description ?? result.metadata?.description ?? undefined,
+      githubOrg: company.githubOrg ?? result.metadata?.githubOrg ?? undefined,
+      engineeringBlogUrl: company.engineeringBlogUrl ?? result.metadata?.blogUrl ?? undefined,
+      confidence: computeConfidence(signals),
+      confidenceSignals: { ...signals, probeLog: result.probeLog } as object,
+    };
+
+    try {
+      await this.prisma.company.update({ where: { id: companyId }, data });
+    } catch (err) {
+      // The probe resolved to a website another company already owns (redirects
+      // to a parent domain, shared host). Keep this company's own website and
+      // still save the probe outcome — the stage matters more than the URL.
+      if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
+        await this.prisma.company.update({
+          where: { id: companyId },
+          data: { ...data, website: company.website },
+        });
+      } else {
+        throw err;
+      }
+    }
 
     return { stage };
   }
