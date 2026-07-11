@@ -56,50 +56,72 @@ const stripHtml = (html: string) =>
 const firstUrl = (text: string): string | null =>
   text.match(/https?:\/\/[^\s)|]+/i)?.[0]?.replace(/[.,]$/, '') ?? null;
 
-/** A dev role we'd actually surface — filters out non-eng and non-actionable. */
+const ROLE = /engineer|developer|\bsde\b|programmer|full.?stack|back.?end|front.?end|software|architect/i;
+const INDIA = /india|bangalore|bengaluru|mumbai|pune|hyderabad|delhi|gurgaon|gurugram|noida|chennai/i;
+const WORLDWIDE = /remote\s*\(?\s*(worldwide|anywhere|global)|worldwide|(fully|100%)\s*remote|remote,?\s*(worldwide|anywhere)/i;
+// Restricted to a region an India-based applicant can't take — the big HN
+// majority. If a posting says US/EU/UK-only, skip it however good it looks.
+const REGION_LOCKED =
+  /\bus[\s-]?only|usa[\s-]?only|u\.s\.?[\s-]?only|\bus[- ]based|must be (located |based )?in the (us|usa|united states|uk|eu)|us citizen|us work authoriz|authoriz\w* to work in the (us|uk|eu)|remote\s*\(?\s*(us|usa|united states|eu|europe|uk|canada|north america|americas|us\/canada|us & canada|us, canada)|(us|eu|uk|canada|europe|north america)[\s-]?(only|based|remote)|est timezone|pst timezone|within the (us|uk|eu)/i;
+
+/** Actionable for an India-based applicant: a dev role, worldwide-remote or India, not region-locked. */
 function isRelevant(text: string): boolean {
-  const t = text.toLowerCase();
-  const eng = /engineer|developer|\bsde\b|programmer|full.?stack|back.?end|front.?end|software/.test(t);
-  const actionable = /remote|india|bangalore|bengaluru|mumbai|pune|hyderabad|delhi|gurgaon|noida|worldwide|anywhere/.test(t);
-  return eng && actionable;
+  if (!ROLE.test(text)) return false;
+  if (REGION_LOCKED.test(text)) return false;
+  return WORLDWIDE.test(text) || INDIA.test(text);
+}
+
+/** Position 0 of the header should be a company — not a city, salary, or URL. */
+function looksLikeCompany(s: string): boolean {
+  if (s.length < 2 || s.length > 60) return false;
+  if (/^https?:/i.test(s)) return false; // URL
+  if (/\$|\d{2,3}\s?k\b|\d{2,3}[-–]\d{2,3}\s?k|salary|equity|benefits/i.test(s)) return false; // salary/comp
+  if (/^(remote|onsite|hybrid|full.?time|part.?time|contract|intern)/i.test(s)) return false;
+  if (/^[A-Za-z .]+,\s*[A-Z]{2}$/.test(s)) return false; // "Blaine, WA" city, state
+  if (/remote|worldwide|anywhere/i.test(s) && s.length < 30) return false;
+  return true;
 }
 
 /**
  * Parse one top-level comment into a BoardJob. HN convention: the first line is
- * a header like "Company | Role | Location | REMOTE | ...". Returns null when we
- * cannot confidently extract a company + role.
+ * "Company | Role | Location | REMOTE | ...". Strict on purpose — returns null
+ * unless the first segment is plausibly a company AND a segment names a real
+ * role AND the posting is actionable from India. A skipped real job beats a
+ * fabricated company or a US-only role in the user's feed.
  */
 function parseComment(c: AlgoliaComment): BoardJob | null {
   if (!c.text) return null;
   const text = stripHtml(c.text);
   if (text.length < 60 || !isRelevant(text)) return null;
 
-  // The header is the first pipe-delimited line; fall back to the first sentence.
-  const headerLine = c.text.split(/<p>|\n/)[0] ?? text;
-  const header = stripHtml(headerLine);
+  const header = stripHtml(c.text.split(/<p>|\n/)[0] ?? text);
   const parts = header.split('|').map((p) => p.trim()).filter(Boolean);
   if (parts.length < 2) return null;
 
-  const company = parts[0].replace(/^\W+|\W+$/g, '').slice(0, 120);
-  // The role is the first segment that reads like a title, else the 2nd segment.
-  const roleSeg =
-    parts.find((p) => /engineer|developer|\bsde\b|full.?stack|back.?end|front.?end|software|lead|architect/i.test(p)) ??
-    parts[1];
-  const title = roleSeg.slice(0, 160);
-  if (!company || company.length < 2 || /^https?:/i.test(company)) return null;
+  // Drop a trailing unclosed "(...": "Enveritas (YC S18, non-profit" -> "Enveritas".
+  const clean = (s: string) => s.replace(/\s*\([^)]*$/, '').replace(/^\W+|\W+$/g, '').trim();
 
-  const url = firstUrl(text) ?? `https://news.ycombinator.com/item?id=${c.id}`;
-  const location = parts.find((p) => /remote|india|bangalore|bengaluru|mumbai|pune|hyderabad|worldwide|anywhere/i.test(p)) ?? null;
+  const company = clean(parts[0]).slice(0, 60);
+  if (!looksLikeCompany(company)) return null;
+
+  // The role MUST be an explicit segment with a role keyword — no guessing.
+  const roleSeg = parts.slice(1).find((p) => ROLE.test(p));
+  if (!roleSeg) return null;
+  const title = clean(roleSeg).slice(0, 160);
+
+  const url = firstUrl(text);
+  const applyUrl = url && !url.includes('news.ycombinator.com') ? url : null;
+  const location = parts.find((p) => /remote|worldwide|anywhere/i.test(p) || INDIA.test(p)) ?? null;
 
   return {
-    company: { name: company, atsHintUrl: /^https?:/i.test(url) && !url.includes('news.ycombinator.com') ? url : null },
+    company: { name: company, atsHintUrl: applyUrl },
     job: {
       externalId: `hn-${c.id}`,
       title,
       description: capDescription(text),
-      url,
+      url: applyUrl ?? `https://news.ycombinator.com/item?id=${c.id}`,
       location,
-      country: /india|bangalore|bengaluru|mumbai|pune|hyderabad|delhi|gurgaon|noida/i.test(text) ? 'IN' : null,
+      country: INDIA.test(text) ? 'IN' : null,
       workMode: /remote|worldwide|anywhere/i.test(text) ? 'REMOTE' : null,
     },
   };
