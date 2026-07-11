@@ -28,14 +28,30 @@ function literalInText(phrase: string, text: string): boolean {
   return new RegExp(`(^|[^${WORD}])${escape(p)}([^${WORD}]|$)`, 'i').test(text);
 }
 
-export type KeywordStatus = 'PRESENT' | 'VARIANT' | 'MISSING';
+export type KeywordStatus = 'PRESENT' | 'ACCEPTED_VARIANT' | 'ADD_EXACT' | 'MISSING';
 
 export interface KeywordItem {
   /** The JD's exact phrasing — the string an ATS is matching on. */
   keyword: string;
   status: KeywordStatus;
-  /** For VARIANT: the equivalent term you actually wrote. */
+  /** The equivalent term you actually wrote (for variants). */
   yourTerm?: string;
+}
+
+const normalize = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '');
+
+/**
+ * Do two terms differ only trivially — punctuation, case, a .js/JS suffix — so
+ * an ATS treats them as the same token? "React" vs "React.js" and "Node.js" vs
+ * "NodeJS" are trivial (one normalizes to a substring of the other). "REST API"
+ * vs "RESTful APIs" is NOT — those are different words, and a literal filter
+ * misses them, so the user should add the exact phrase.
+ */
+function trivialVariant(a: string, b: string): boolean {
+  const na = normalize(a);
+  const nb = normalize(b);
+  if (!na || !nb) return false;
+  return na === nb || na.includes(nb) || nb.includes(na);
 }
 
 export interface AtsKeywordAudit {
@@ -68,7 +84,11 @@ export function atsKeywordAudit(
     if (literalInText(keyword, resumeText)) return { keyword, status: 'PRESENT' };
     const canon = canonicalTech(keyword);
     if (canon && resumeTokens.has(canon)) {
-      return { keyword, status: 'VARIANT', yourTerm: userByCanonical.get(canon) };
+      const yourTerm = userByCanonical.get(canon);
+      // You have the tech. Trivial spelling difference → ATS accepts it, leave
+      // it alone. Real rewording → add the JD's exact phrase.
+      const accepted = yourTerm ? trivialVariant(keyword, yourTerm) : false;
+      return { keyword, status: accepted ? 'ACCEPTED_VARIANT' : 'ADD_EXACT', yourTerm };
     }
     return { keyword, status: 'MISSING' };
   };
@@ -81,13 +101,21 @@ export function atsKeywordAudit(
     .filter((k) => !reqLower.has(k.toLowerCase()))
     .map(classify);
 
+  // Only urge additions that genuinely matter: required rewordings and truly
+  // missing required keywords, plus preferred rewordings. Never nag about a
+  // spelling an ATS already accepts.
   const addExact = [
-    ...req.filter((i) => i.status !== 'PRESENT'),
-    ...pref.filter((i) => i.status === 'VARIANT'),
+    ...req.filter((i) => i.status === 'ADD_EXACT' || i.status === 'MISSING'),
+    ...pref.filter((i) => i.status === 'ADD_EXACT'),
   ].map((i) => i.keyword);
 
+  // "Covered" = literal match OR an accepted spelling variant.
   const requiredMatchPct = req.length
-    ? Math.round((req.filter((i) => i.status === 'PRESENT').length / req.length) * 100)
+    ? Math.round(
+        (req.filter((i) => i.status === 'PRESENT' || i.status === 'ACCEPTED_VARIANT').length /
+          req.length) *
+          100,
+      )
     : null;
 
   return { required: req, preferred: pref, addExact, requiredMatchPct };

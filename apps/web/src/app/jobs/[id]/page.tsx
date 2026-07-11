@@ -29,7 +29,7 @@ interface Transferable {
 
 interface KeywordItem {
   keyword: string;
-  status: 'PRESENT' | 'VARIANT' | 'MISSING';
+  status: 'PRESENT' | 'ACCEPTED_VARIANT' | 'ADD_EXACT' | 'MISSING';
   yourTerm?: string;
 }
 
@@ -610,14 +610,20 @@ export default function JobPage() {
 function KeywordRow({ item, required }: { item: KeywordItem; required: boolean }) {
   const style =
     item.status === 'PRESENT'
-      ? { mark: '✓', color: 'text-emerald-400', note: 'on your resume' }
-      : item.status === 'VARIANT'
+      ? { mark: '✓', color: 'text-emerald-400', note: 'exact match' }
+      : item.status === 'ACCEPTED_VARIANT'
         ? {
-            mark: '~',
-            color: 'text-amber-400',
-            note: item.yourTerm ? `you wrote “${item.yourTerm}” — add this exact phrase` : 'add this exact phrase',
+            mark: '✓',
+            color: 'text-emerald-400/80',
+            note: item.yourTerm ? `you wrote “${item.yourTerm}” — ATS accepts it` : 'accepted variant',
           }
-        : { mark: '✕', color: 'text-neutral-500', note: 'missing' };
+        : item.status === 'ADD_EXACT'
+          ? {
+              mark: '~',
+              color: 'text-amber-400',
+              note: item.yourTerm ? `you wrote “${item.yourTerm}” — add this exact phrase` : 'add this exact phrase',
+            }
+          : { mark: '✕', color: 'text-neutral-500', note: 'missing' };
   return (
     <div className="flex items-center justify-between gap-3">
       <span className="flex items-center gap-2">

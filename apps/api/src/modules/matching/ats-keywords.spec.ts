@@ -16,19 +16,23 @@ describe('atsKeywordAudit', () => {
     expect(a.addExact).toEqual([]);
   });
 
-  it('flags VARIANT when you have the tech but the JD writes it differently', () => {
-    // Resume says "RESTful APIs"; the JD keyword is "REST API". Same skill, but
-    // a literal ATS filter for "REST API" would miss the resume.
+  it('urges ADD_EXACT on a real rewording: resume "RESTful APIs", JD "REST API"', () => {
     const a = atsKeywordAudit(['REST API'], [], RESUME, SKILLS);
-    expect(a.required[0].status).toBe('VARIANT');
+    expect(a.required[0].status).toBe('ADD_EXACT');
     expect(a.required[0].yourTerm).toBe('RESTful APIs');
     expect(a.addExact).toEqual(['REST API']);
   });
 
-  it('treats "ExpressJS" as a variant of "Express.js"', () => {
+  it('does NOT nag when the difference is trivial: JD "ExpressJS", resume "Express.js"', () => {
     const a = atsKeywordAudit(['ExpressJS'], [], RESUME, SKILLS);
-    expect(a.required[0].status).toBe('VARIANT');
-    expect(a.addExact).toEqual(['ExpressJS']);
+    expect(a.required[0].status).toBe('ACCEPTED_VARIANT');
+    expect(a.addExact).toEqual([]);
+  });
+
+  it('does NOT nag "React" when the resume says "React.js"', () => {
+    const a = atsKeywordAudit(['React'], [], RESUME, SKILLS);
+    expect(a.required[0].status).toBe('ACCEPTED_VARIANT');
+    expect(a.addExact).toEqual([]);
   });
 
   it('marks a technology you do not have at all as MISSING', () => {
@@ -44,15 +48,16 @@ describe('atsKeywordAudit', () => {
     expect(a.preferred.map((k) => k.keyword)).toEqual(['GraphQL']);
   });
 
-  it('the actionable list adds missing/variant required first, then preferred variants only', () => {
-    const a = atsKeywordAudit(['Docker', 'REST API'], ['MySQL'], RESUME, SKILLS);
-    // Docker missing + REST API variant are required adds; MySQL preferred is PRESENT so not added.
+  it('the actionable list adds missing + real-rewording required, not accepted variants', () => {
+    const a = atsKeywordAudit(['Docker', 'REST API', 'React'], ['MySQL'], RESUME, SKILLS);
+    // Docker missing + REST API reworded are adds; React (React.js) is accepted;
+    // MySQL preferred is present.
     expect(a.addExact).toEqual(['Docker', 'REST API']);
   });
 
-  it('computes the required literal-match percentage honestly', () => {
+  it('counts accepted variants as covered in the required percentage', () => {
     const a = atsKeywordAudit(['Node.js', 'Docker', 'Redis', 'MySQL'], [], RESUME, SKILLS);
-    // Node.js + MySQL literal-present of 4 required = 50%.
+    // Node.js + MySQL covered of 4 = 50%.
     expect(a.requiredMatchPct).toBe(50);
   });
 });
