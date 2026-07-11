@@ -54,6 +54,16 @@ export function competitionChips(jobAgeDays: number | null): string[] {
   return [];
 }
 
+export type Impact = 'DO_FIRST' | 'HIGH' | 'MEDIUM' | 'LOW';
+
+/** Human impact label instead of arbitrary stars. The first action is the one. */
+export function impactLabel(stars: number, isTop: boolean): Impact {
+  if (isTop) return 'DO_FIRST';
+  if (stars >= 4) return 'HIGH';
+  if (stars === 3) return 'MEDIUM';
+  return 'LOW';
+}
+
 export function greeting(hourIST: number): string {
   if (hourIST < 12) return 'Good morning';
   if (hourIST < 17) return 'Good afternoon';

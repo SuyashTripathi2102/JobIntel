@@ -4,8 +4,10 @@ import { nextOutreachAction } from '../referrals/referral-followup';
 import {
   competitionChips,
   greeting,
+  impactLabel,
   istHour,
   weekMomentum,
+  type Impact,
   type Momentum,
 } from './today.pure';
 
@@ -23,10 +25,12 @@ export interface TodayAction {
   title: string;
   detail: string;
   chips: string[];
-  stars: number; // 1–5
+  stars: number; // 1–5, internal ordering only
+  impact: Impact; // what the user sees instead of stars
   minutes: number; // estimated effort
   href: string; // into an existing feature
   value?: string; // e.g. "unlocks 6 strong matches"
+  why?: string[]; // "why this first" — only on the lead action
 }
 
 // Lower = earlier when priority ties. Time-sensitive replies first; passive
@@ -122,7 +126,7 @@ export class TodayService {
     });
     const tailoredJobs = new Set(tailored.map((t) => t.jobId));
 
-    const actions: TodayAction[] = [];
+    const actions: Omit<TodayAction, 'impact'>[] = [];
 
     // 1) Outreach that needs you today — replies to answer, nudges that are due.
     const due = contacts
@@ -161,6 +165,13 @@ export class TodayService {
       const chips = [...competitionChips(ageDays), `fit ${Math.round(m.opportunityScore ?? 0)}`];
       if (contactedCompanies.has(m.job.company.name)) chips.push('referral in flight');
       if (tailoredJobs.has(m.jobId)) chips.push('resume ready');
+      const why = [
+        ageDays <= 0 ? 'Posted today' : `Posted ${ageDays} day${ageDays === 1 ? '' : 's'} ago`,
+        ...(ageDays <= 3 ? ['Low competition — early applicants get screened first'] : []),
+        `Strong fit for your resume (${Math.round(m.opportunityScore ?? 0)})`,
+        ...(tailoredJobs.has(m.jobId) ? ['Your tailored resume is ready'] : []),
+        ...(contactedCompanies.has(m.job.company.name) ? ['A referral is already in flight'] : []),
+      ];
       actions.push({
         kind: 'APPLY',
         title: `Apply to ${m.job.company.name}`,
@@ -169,6 +180,7 @@ export class TodayService {
         stars: 5,
         minutes: 10,
         href: `/jobs/${m.jobId}`,
+        why,
       });
     }
 
@@ -233,10 +245,10 @@ export class TodayService {
       });
     }
 
-    actions.sort(
-      (a, b) => b.stars - a.stars || KIND_ORDER[a.kind] - KIND_ORDER[b.kind],
-    );
-    const ranked = actions.slice(0, 7);
+    actions.sort((a, b) => b.stars - a.stars || KIND_ORDER[a.kind] - KIND_ORDER[b.kind]);
+    const ranked: TodayAction[] = actions
+      .slice(0, 7)
+      .map((a, i) => ({ ...a, impact: impactLabel(a.stars, i === 0) }));
 
     const momentum = weekMomentum({
       interviewsInProgress,
@@ -246,9 +258,17 @@ export class TodayService {
       applicationsActive,
     });
 
+    // Today's goal: get one application in. Progress people can feel.
+    const istMs = Date.now() + 5.5 * 3_600_000;
+    const startOfTodayUtc = new Date(Math.floor(istMs / DAY) * DAY - 5.5 * 3_600_000);
+    const appliedToday = await this.prisma.application.count({
+      where: { userId, appliedAt: { gte: startOfTodayUtc } },
+    });
+
     return {
       greeting: greeting(istHour()),
       name: name ?? null,
+      goal: { label: 'Get one application submitted today', done: appliedToday, target: 1 },
       weekProbability: momentum.level as Momentum,
       probabilityReason: momentum.reason,
       totalMinutes: ranked.reduce((n, a) => n + a.minutes, 0),

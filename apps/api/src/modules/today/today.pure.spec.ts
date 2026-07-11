@@ -1,4 +1,11 @@
-import { competitionChips, greeting, istHour, weekMomentum, type MomentumSignals } from './today.pure';
+import {
+  competitionChips,
+  greeting,
+  impactLabel,
+  istHour,
+  weekMomentum,
+  type MomentumSignals,
+} from './today.pure';
 
 const sig = (over: Partial<MomentumSignals>): MomentumSignals => ({
   interviewsInProgress: 0,
@@ -39,6 +46,15 @@ describe('competitionChips', () => {
     expect(competitionChips(1)).toEqual(['Fresh', 'Low competition']);
     expect(competitionChips(30)).toEqual(['Older posting']);
     expect(competitionChips(null)).toEqual([]);
+  });
+});
+
+describe('impactLabel', () => {
+  it('marks the first action DO_FIRST and grades the rest by leverage', () => {
+    expect(impactLabel(5, true)).toBe('DO_FIRST');
+    expect(impactLabel(4, false)).toBe('HIGH');
+    expect(impactLabel(3, false)).toBe('MEDIUM');
+    expect(impactLabel(2, false)).toBe('LOW');
   });
 });
 
