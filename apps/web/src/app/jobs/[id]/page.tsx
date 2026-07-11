@@ -29,6 +29,7 @@ interface Transferable {
 
 interface Detail {
   userYears: number | null;
+  whatIf: { skill: string; newFit: number | null; delta: number }[];
   company: {
     name: string;
     confidence: number;
@@ -98,11 +99,22 @@ function Dim({ label, value, suffix = '%' }: { label: string; value: number | nu
   );
 }
 
-function Bar({ pct }: { pct: number }) {
-  const color = pct >= 75 ? 'bg-emerald-500' : pct >= 50 ? 'bg-amber-500' : 'bg-red-500';
+/** One line of the resume-vs-job diff: the JD skill, and where you stand on it. */
+function DiffRow({ skill, state, note }: { skill: string; state: 'have' | 'transfer' | 'missing'; note?: string }) {
+  const mark = { have: '✓', transfer: '~', missing: '✕' }[state];
+  const markColor = {
+    have: 'text-emerald-400',
+    transfer: 'text-amber-400',
+    missing: 'text-neutral-600',
+  }[state];
+  const youLabel = { have: 'on your resume', transfer: note ?? 'transferable', missing: 'not on your resume' }[state];
   return (
-    <div className="h-2 w-full overflow-hidden rounded-full bg-neutral-800">
-      <div className={`h-full ${color}`} style={{ width: `${Math.max(2, Math.min(100, pct))}%` }} />
+    <div className="flex items-center justify-between gap-3 py-2 text-sm">
+      <span className="font-medium text-neutral-200">{skill}</span>
+      <span className={`flex items-center gap-2 text-xs ${markColor}`}>
+        {youLabel}
+        <span className="text-base leading-none">{mark}</span>
+      </span>
     </div>
   );
 }
@@ -204,6 +216,27 @@ export default function JobPage() {
           ? 'Good'
           : 'Moderate';
 
+  // Qualitative expectation — never an invented percentage.
+  const expectedOutcome =
+    v?.verdict === 'APPLY'
+      ? '🟢 Good chance of a recruiter review — worth 30 minutes.'
+      : v?.verdict === 'CONSIDER'
+        ? '🟡 A real shot if the gap does not scare the screener — worth a considered application.'
+        : v?.verdict === 'NEEDS_REVIEW'
+          ? '🔵 Judgement call — read the JD before spending time on it.'
+          : null;
+
+  // Why it is not green — for CONSIDER/NEEDS_REVIEW, name the blocker.
+  const whyNotApply: string[] = [];
+  if (v && v.verdict !== 'APPLY' && v.verdict !== 'SKIP') {
+    if (gap === 1) whyNotApply.push('JD requests more experience — you are a one-year stretch');
+    else if (gap != null && gap > 1) whyNotApply.push(`JD requests ${experience} — you have ${userYears}`);
+    if (v.specializationFit != null && v.specializationFit < 70)
+      whyNotApply.push('Some of the required stack is missing from your resume');
+    if (v.code === 'AMBIGUOUS_NEEDS_REVIEW')
+      whyNotApply.push('CareerOS could not confidently tell what this role is');
+  }
+
   return (
     <Shell>
       <Link href="/" className="text-sm text-neutral-500 hover:text-neutral-300">
@@ -237,6 +270,9 @@ export default function JobPage() {
               </p>
               {confidence && (
                 <p className="mt-1 text-xs text-neutral-500">Confidence: {confidence}</p>
+              )}
+              {expectedOutcome && (
+                <p className="mt-2 text-sm text-neutral-300">{expectedOutcome}</p>
               )}
             </div>
             {v.opportunityScore != null && (
@@ -323,6 +359,69 @@ export default function JobPage() {
         </section>
       )}
 
+      {/* WHY NOT APPLY — name the blocker for non-green verdicts. */}
+      {whyNotApply.length > 0 && (
+        <section className="mt-4 rounded-xl border border-amber-900/60 bg-amber-950/20 p-4">
+          <h2 className="text-sm font-medium uppercase tracking-wide text-amber-400">
+            Why not “Apply now”?
+          </h2>
+          <ul className="mt-2 space-y-1 text-sm text-neutral-300">
+            {whyNotApply.map((r, i) => (
+              <li key={i}>• {r}</li>
+            ))}
+          </ul>
+        </section>
+      )}
+
+      {/* RESUME vs JOB — the diff. Left: what the JD asks. Right: you. */}
+      {spec && (spec.strong.length > 0 || spec.transferable.length > 0 || spec.missing.length > 0) && (
+        <section className="mt-4 rounded-xl border border-neutral-800 bg-neutral-900 p-4">
+          <div className="flex items-baseline justify-between">
+            <h2 className="text-sm font-medium uppercase tracking-wide text-neutral-400">
+              Your resume vs this job
+            </h2>
+            {spec.fit != null && (
+              <span className="text-sm font-semibold tabular-nums text-neutral-200">{spec.fit}% stack fit</span>
+            )}
+          </div>
+          <div className="mt-3 divide-y divide-neutral-800/70">
+            {spec.strong.map((s) => (
+              <DiffRow key={s} skill={s} state="have" />
+            ))}
+            {spec.transferable.map((t) => (
+              <DiffRow key={t.skill} skill={t.skill} state="transfer" note={`via ${t.via}`} />
+            ))}
+            {spec.missing.map((s) => (
+              <DiffRow key={s} skill={s} state="missing" />
+            ))}
+          </div>
+        </section>
+      )}
+
+      {/* WHAT-IF — deterministic: what closing each gap does to the score. */}
+      {detail && detail.whatIf.length > 0 && (
+        <section className="mt-4 rounded-xl border border-neutral-800 bg-neutral-900 p-4">
+          <h2 className="text-sm font-medium uppercase tracking-wide text-neutral-400">
+            Close the gap
+          </h2>
+          <p className="mt-1 text-[11px] text-neutral-500">
+            What each missing skill would do to your stack fit — computed, not estimated.
+          </p>
+          <ul className="mt-3 space-y-2">
+            {detail.whatIf.map((w) => (
+              <li key={w.skill} className="flex items-center justify-between gap-3 text-sm">
+                <span className="text-neutral-200">Learn {w.skill}</span>
+                <span className="flex items-center gap-2 tabular-nums text-neutral-400">
+                  {spec?.fit}% <span className="text-neutral-600">→</span>{' '}
+                  <span className="font-medium text-emerald-300">{w.newFit}%</span>
+                  <span className="text-emerald-500/70">+{w.delta}</span>
+                </span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
       {/* COMPANY HEALTH — data we already have, surfaced. */}
       {co && (
         <section className="mt-4 rounded-xl border border-neutral-800 bg-neutral-900 p-4">
@@ -380,64 +479,6 @@ export default function JobPage() {
           {tracked ? '✓ Tracked' : 'I applied'}
         </button>
       </div>
-
-      {/* SPECIALIZATION BREAKDOWN — the auditable stack fit */}
-      {spec && (spec.strong.length > 0 || spec.transferable.length > 0 || spec.missing.length > 0) && (
-        <section className="mt-6 rounded-xl border border-neutral-800 bg-neutral-900 p-4">
-          <div className="flex items-baseline justify-between">
-            <h2 className="text-sm font-medium uppercase tracking-wide text-neutral-400">
-              Stack fit vs your resume
-            </h2>
-            {spec.fit != null && (
-              <span className="text-sm font-semibold tabular-nums text-neutral-200">{spec.fit}%</span>
-            )}
-          </div>
-          {spec.fit != null && (
-            <div className="mt-2">
-              <Bar pct={spec.fit} />
-            </div>
-          )}
-          <div className="mt-4 space-y-3 text-sm">
-            {spec.strong.length > 0 && (
-              <div>
-                <div className="text-[11px] uppercase tracking-wide text-emerald-500">On your resume</div>
-                <div className="mt-1 flex flex-wrap gap-1.5">
-                  {spec.strong.map((s) => (
-                    <span key={s} className="rounded-full border border-emerald-800 bg-emerald-950/50 px-2.5 py-0.5 text-xs text-emerald-300">
-                      ✓ {s}
-                    </span>
-                  ))}
-                </div>
-              </div>
-            )}
-            {spec.transferable.length > 0 && (
-              <div>
-                <div className="text-[11px] uppercase tracking-wide text-amber-500">Transferable</div>
-                <div className="mt-1 space-y-1">
-                  {spec.transferable.map((t) => (
-                    <div key={t.skill} className="text-xs text-amber-300/90">
-                      ~ <span className="font-medium">{t.skill}</span>{' '}
-                      <span className="text-amber-400/60">— {t.note}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-            {spec.missing.length > 0 && (
-              <div>
-                <div className="text-[11px] uppercase tracking-wide text-neutral-500">Missing</div>
-                <div className="mt-1 flex flex-wrap gap-1.5">
-                  {spec.missing.map((s) => (
-                    <span key={s} className="rounded-full border border-neutral-700 bg-neutral-950 px-2.5 py-0.5 text-xs text-neutral-400">
-                      ✕ {s}
-                    </span>
-                  ))}
-                </div>
-              </div>
-            )}
-          </div>
-        </section>
-      )}
 
       {/* CLASSIFICATION FACTS */}
       {c && (

@@ -800,18 +800,34 @@ export class MatchingService {
       (version?.confirmedProfile as { totalYearsExperience?: number } | null)
         ?.totalYearsExperience ?? null;
 
-    const specialization = c
-      ? specializationBreakdown(
-          {
-            requiredSkills: c.requiredSkills,
-            specialization: c.specializations,
-          } as JobClassification,
-          confirmedSkills,
-        )
+    const jdSkills = c
+      ? ({ requiredSkills: c.requiredSkills, specialization: c.specializations } as JobClassification)
       : null;
+    const specialization = jdSkills
+      ? specializationBreakdown(jdSkills, confirmedSkills)
+      : null;
+
+    // What-if: a real, deterministic simulation. For every JD skill the user
+    // lacks, recompute the stack fit AS IF they had it, and report the gain.
+    // No invented numbers — the same breakdown function, one skill richer.
+    const whatIf =
+      jdSkills && specialization?.fit != null
+        ? [
+            ...specialization.missing,
+            ...specialization.transferable.map((t) => t.skill),
+          ]
+            .map((skill) => {
+              const withIt = specializationBreakdown(jdSkills, [...confirmedSkills, skill]);
+              return { skill, newFit: withIt.fit, delta: (withIt.fit ?? 0) - specialization.fit! };
+            })
+            .filter((w) => w.delta > 0)
+            .sort((a, b) => b.delta - a.delta)
+            .slice(0, 5)
+        : [];
 
     return {
       userYears,
+      whatIf,
       company: job?.company
         ? {
             name: job.company.name,
