@@ -11,6 +11,7 @@
  * All pure and deterministic — no network, no LLM, no invented numbers.
  */
 import type { ReferralRole } from './referral-ranking';
+import type { CompanyChannels } from './company-contacts';
 
 export interface ContactLike {
   id: string;
@@ -53,6 +54,32 @@ export function whyBullets(c: ContactLike, companyName: string): string[] {
   );
   return out;
 }
+
+/**
+ * Two separate, honest qualitative confidences (1–5), never a fake percentage:
+ *   referral  — can this person actually get you referred? (employment + role)
+ *   response  — how likely are they to reply? (contact path, activity, overlap)
+ */
+export interface ContactConfidence {
+  referral: number;
+  response: number;
+}
+
+export function contactConfidence(c: ContactLike): ContactConfidence {
+  let referral = c.publicMember ? 4 : 2; // confirmed employee vs outside contributor
+  if (c.role === 'RECRUITER') referral = 5;
+  else if (c.role === 'HIRING_MANAGER') referral = Math.max(referral, 4);
+
+  let response = 2;
+  if (c.email) response += 2;
+  else if (c.blog || c.twitter) response += 1;
+  if (c.sharedTech.length) response += 1;
+  if (c.contributions >= 20) response += 1;
+
+  return { referral: clamp(referral), response: clamp(response) };
+}
+
+const clamp = (n: number) => Math.max(1, Math.min(5, n));
 
 export interface OutreachGraph {
   recruiters: number;
@@ -111,6 +138,121 @@ export interface PlanStep {
 
 const starsFor = (priority: number): number =>
   priority >= 75 ? 5 : priority >= 60 ? 4 : priority >= 45 ? 3 : 2;
+
+export type LadderKind =
+  | 'REFERRAL'
+  | 'RECRUITER'
+  | 'HIRING_MANAGER'
+  | 'COMPANY_EMAIL'
+  | 'CAREERS_PAGE'
+  | 'CONTACT_PAGE'
+  | 'APPLY';
+
+export interface LadderRung {
+  kind: LadderKind;
+  label: string;
+  detail: string;
+  /** anchor = a person's card on this page; mailto/link = external. */
+  action: { type: 'anchor' | 'mailto' | 'link'; value: string } | null;
+  confidence: number; // 1–5
+}
+
+/**
+ * The Opportunity Contact Engine's core: an ordered set of ways IN, best first,
+ * that never dead-ends. People (referral > recruiter > manager) come first;
+ * when there's no inside person we fall through to the company's own published
+ * channels (recruiting email → careers page → contact page/general email) and,
+ * always, "apply anyway". Every rung is a concrete next action.
+ */
+export function buildContactLadder(
+  contacts: ContactLike[],
+  channels: CompanyChannels,
+  opts: { companyName: string; jobUrl: string | null },
+): LadderRung[] {
+  const sorted = [...contacts].sort((a, b) => b.priority - a.priority);
+  const used = new Set<string>();
+  const rungs: LadderRung[] = [];
+
+  const referrer = sorted.find((c) => c.role !== 'RECRUITER');
+  if (referrer) {
+    used.add(referrer.id);
+    rungs.push({
+      kind: 'REFERRAL',
+      label: `Ask ${referrer.name} for a referral`,
+      detail: `${referrer.role === 'HIRING_MANAGER' ? 'Engineering leader' : 'Engineer'} at ${opts.companyName} — a warm referral beats a cold apply.`,
+      action: { type: 'anchor', value: `contact-${referrer.id}` },
+      confidence: contactConfidence(referrer).referral,
+    });
+  }
+
+  const recruiter = sorted.find((c) => c.role === 'RECRUITER' && !used.has(c.id));
+  if (recruiter) {
+    used.add(recruiter.id);
+    rungs.push({
+      kind: 'RECRUITER',
+      label: `Message ${recruiter.name} (recruiter)`,
+      detail: 'Recruiters can route you straight to the hiring team.',
+      action: { type: 'anchor', value: `contact-${recruiter.id}` },
+      confidence: contactConfidence(recruiter).referral,
+    });
+  }
+
+  const manager = sorted.find((c) => c.role === 'HIRING_MANAGER' && !used.has(c.id));
+  if (manager) {
+    used.add(manager.id);
+    rungs.push({
+      kind: 'HIRING_MANAGER',
+      label: `Reach ${manager.name} (eng leader)`,
+      detail: 'A concise, respectful note to someone who owns the req.',
+      action: { type: 'anchor', value: `contact-${manager.id}` },
+      confidence: contactConfidence(manager).referral,
+    });
+  }
+
+  const recruitingEmail = channels.emails.find((e) => e.kind === 'RECRUITING');
+  if (recruitingEmail) {
+    rungs.push({
+      kind: 'COMPANY_EMAIL',
+      label: `Email ${recruitingEmail.address}`,
+      detail: "The company's own recruiting inbox — published to be written to.",
+      action: { type: 'mailto', value: recruitingEmail.address },
+      confidence: 3,
+    });
+  }
+
+  if (channels.careerPageUrl) {
+    rungs.push({
+      kind: 'CAREERS_PAGE',
+      label: 'Apply via the careers page',
+      detail: 'Their official intake — sometimes has a referral or talent-network form.',
+      action: { type: 'link', value: channels.careerPageUrl },
+      confidence: 2,
+    });
+  }
+
+  const generalEmail = channels.emails.find((e) => e.kind !== 'RECRUITING');
+  if (channels.contactPageUrl || generalEmail) {
+    rungs.push({
+      kind: 'CONTACT_PAGE',
+      label: generalEmail ? `Email ${generalEmail.address}` : 'Use the contact page',
+      detail: 'General channel — ask to be pointed to the right person.',
+      action: generalEmail
+        ? { type: 'mailto', value: generalEmail.address }
+        : { type: 'link', value: channels.contactPageUrl! },
+      confidence: 2,
+    });
+  }
+
+  rungs.push({
+    kind: 'APPLY',
+    label: 'Apply anyway',
+    detail: 'A quiet inbox never blocks you — get the application in regardless.',
+    action: opts.jobUrl ? { type: 'link', value: opts.jobUrl } : null,
+    confidence: 2,
+  });
+
+  return rungs;
+}
 
 /**
  * The ordered play for this job. When an inside contact exists we lead with the

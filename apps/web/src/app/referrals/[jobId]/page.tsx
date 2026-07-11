@@ -27,8 +27,16 @@ interface Contact {
   publicMember: boolean;
   contributions: number;
   why: string[];
+  confidence: { referral: number; response: number };
   status: Status;
   draft: string | null;
+}
+interface LadderRung {
+  kind: string;
+  label: string;
+  detail: string;
+  action: { type: 'anchor' | 'mailto' | 'link'; value: string } | null;
+  confidence: number;
 }
 interface Pick {
   id: string;
@@ -61,7 +69,9 @@ interface Data {
   graph: Graph;
   strategy: Strategy;
   plan: PlanStep[];
-  message: string | null;
+  contactLadder: LadderRung[];
+  channels: { emails: { address: string; kind: string }[] };
+  searchedNote: string | null;
 }
 
 const ROLE_LABEL: Record<Role, string> = {
@@ -112,7 +122,7 @@ export default function ReferralsPage() {
     <Shell>
       <div className="flex items-baseline justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Referrals — {data.companyName}</h1>
+          <h1 className="text-2xl font-semibold tracking-tight">Ways in — {data.companyName}</h1>
           <p className="text-sm text-neutral-400">{data.jobTitle}</p>
         </div>
         <Link href={`/jobs/${jobId}`} className="text-sm text-neutral-500 hover:text-neutral-300">
@@ -126,6 +136,13 @@ export default function ReferralsPage() {
         company&apos;s open source. CareerOS never messages anyone: drafts are yours to review, edit,
         and send. <strong>One thoughtful message per person — never spam.</strong>
       </div>
+
+      {/* Honest empty-state: says what we searched, never "no presence", points down. */}
+      {data.searchedNote && (
+        <p className="mt-4 rounded-lg border border-amber-900/40 bg-amber-950/20 px-3 py-2 text-[13px] text-amber-200/90">
+          {data.searchedNote}
+        </p>
+      )}
 
       {/* The play, not just the pile: best sequence to win this application. */}
       {data.plan.length > 0 && (
@@ -172,7 +189,23 @@ export default function ReferralsPage() {
         </div>
       )}
 
-      {data.message && <p className="mt-5 text-neutral-400">{data.message}</p>}
+      {/* Ways in — best first, never a dead end. */}
+      {data.contactLadder.length > 0 && (
+        <section className="mt-4 rounded-xl border border-neutral-800 bg-neutral-900 p-4">
+          <h2 className="text-sm font-medium uppercase tracking-wide text-neutral-400">
+            Ways in — best first
+          </h2>
+          <ol className="mt-3 space-y-2">
+            {data.contactLadder.map((r, i) => (
+              <LadderItem key={i} rung={r} />
+            ))}
+          </ol>
+          <p className="mt-2 text-[11px] text-neutral-500">
+            People first, then the company&apos;s own published channels, then apply anyway. Emails
+            are only ones the company posted publicly — never guessed.
+          </p>
+        </section>
+      )}
 
       <div className="mt-5 space-y-4">
         {data.contacts.map((c) => (
@@ -183,11 +216,76 @@ export default function ReferralsPage() {
   );
 }
 
+const LADDER_ICON: Record<string, string> = {
+  REFERRAL: '🤝',
+  RECRUITER: '🧭',
+  HIRING_MANAGER: '👤',
+  COMPANY_EMAIL: '✉️',
+  CAREERS_PAGE: '🌐',
+  CONTACT_PAGE: '📨',
+  APPLY: '🚀',
+};
+
+function LadderItem({ rung }: { rung: LadderRung }) {
+  const scrollTo = () => {
+    if (rung.action?.type === 'anchor') {
+      document.getElementById(rung.action.value)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+  };
+  const inner = (
+    <>
+      <span className="font-medium text-neutral-100">{rung.label}</span>
+      <span className="text-[11px] text-amber-300" title="Reach / referral likelihood">
+        {'★'.repeat(rung.confidence)}
+        <span className="text-neutral-700">{'★'.repeat(5 - rung.confidence)}</span>
+      </span>
+    </>
+  );
+  return (
+    <li className="flex gap-2.5">
+      <span className="mt-0.5 flex-none">{LADDER_ICON[rung.kind] ?? '•'}</span>
+      <div className="min-w-0 flex-1">
+        <div className="flex flex-wrap items-center gap-2">
+          {rung.action?.type === 'anchor' ? (
+            <button onClick={scrollTo} className="text-[14px] text-sky-300 hover:underline">
+              {inner}
+            </button>
+          ) : rung.action ? (
+            <a
+              href={rung.action.type === 'mailto' ? `mailto:${rung.action.value}` : rung.action.value}
+              target={rung.action.type === 'link' ? '_blank' : undefined}
+              rel="noreferrer"
+              className="flex items-center gap-2 text-[14px] text-sky-300 hover:underline"
+            >
+              {inner}
+            </a>
+          ) : (
+            <span className="flex items-center gap-2">{inner}</span>
+          )}
+        </div>
+        <p className="text-[12px] text-neutral-400">{rung.detail}</p>
+      </div>
+    </li>
+  );
+}
+
 function tagFor(id: string, s: Strategy): string | null {
   if (s.primary?.id === id) return 'Primary';
   if (s.secondary?.id === id) return 'Secondary';
   if (s.recruiterFallback?.id === id) return 'Recruiter fallback';
   return null;
+}
+
+function ConfidenceStat({ label, n }: { label: string; n: number }) {
+  return (
+    <span>
+      {label}:{' '}
+      <span className="text-amber-300">
+        {'★'.repeat(n)}
+        <span className="text-neutral-700">{'★'.repeat(5 - n)}</span>
+      </span>
+    </span>
+  );
 }
 
 function GraphChip({ n, label, accent }: { n: number; label: string; accent?: boolean }) {
@@ -249,7 +347,7 @@ function ContactCard({
     .toUpperCase();
 
   return (
-    <div className="rounded-xl border border-neutral-800 bg-neutral-900 p-4">
+    <div id={`contact-${c.id}`} className="scroll-mt-4 rounded-xl border border-neutral-800 bg-neutral-900 p-4">
       <div className="flex items-start gap-3">
         {c.avatarUrl ? (
           // eslint-disable-next-line @next/next/no-img-element
@@ -286,6 +384,10 @@ function ContactCard({
               </li>
             ))}
           </ul>
+          <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-neutral-400">
+            <ConfidenceStat label="Referral likelihood" n={c.confidence.referral} />
+            <ConfidenceStat label="Response likelihood" n={c.confidence.response} />
+          </div>
 
           {c.sharedTech.length > 0 && (
             <div className="mt-2 flex flex-wrap gap-1.5">

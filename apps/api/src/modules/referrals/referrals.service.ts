@@ -15,12 +15,15 @@ import { discoverGithubPeople } from './github-people';
 import { rankReferrals, type ReferralRole } from './referral-ranking';
 import { referralDraftPrompt, type DraftPerson } from './referral-draft';
 import {
+  buildContactLadder,
   buildPlan,
   buildStrategy,
   companyGraph,
+  contactConfidence,
   whyBullets,
   type ContactLike,
 } from './outreach-strategy';
+import { discoverCompanyChannels, type CompanyChannels } from './company-contacts';
 
 /** How long a company's discovered shortlist stays fresh before we re-crawl. */
 const FRESH_MS = 14 * 24 * 60 * 60 * 1000;
@@ -56,7 +59,10 @@ export class ReferralsService {
       where: { id: jobId },
       select: {
         title: true,
-        company: { select: { id: true, name: true, website: true, githubOrg: true } },
+        url: true,
+        company: {
+          select: { id: true, name: true, website: true, githubOrg: true, careerPageUrl: true },
+        },
       },
     });
     if (!job) throw new NotFoundException('Job not found');
@@ -68,19 +74,41 @@ export class ReferralsService {
     });
     const freshest = cached.reduce<number>((m, c) => Math.max(m, c.createdAt.getTime()), 0);
     if (cached.length > 0 && Date.now() - freshest < FRESH_MS) {
-      return this.result(jobId, job.title, companyName, cached);
+      // People are cached; skip the site fetch and lead the ladder with them.
+      const channels: CompanyChannels = {
+        emails: [],
+        careerPageUrl: job.company.careerPageUrl,
+        contactPageUrl: null,
+      };
+      return this.result(jobId, job.title, companyName, cached, channels, job.url, false);
     }
 
     // Re-discover. Failures degrade to "no source" rather than erroring the page.
     let contacts = cached;
+    let rateLimited = false;
+    let channels: CompanyChannels = {
+      emails: [],
+      careerPageUrl: job.company.careerPageUrl,
+      contactPageUrl: null,
+    };
     try {
       const userSkills = await this.userSkills(userId);
-      const { org, people } = await discoverGithubPeople({
-        companyName,
-        website: job.company.website,
-        githubOrg: job.company.githubOrg,
-        token: this.githubToken,
-      });
+      // Company channels + GitHub people in parallel — both are ways in.
+      const [discoveredChannels, gh] = await Promise.all([
+        discoverCompanyChannels({
+          website: job.company.website,
+          careerPageUrl: job.company.careerPageUrl,
+        }).catch(() => channels),
+        discoverGithubPeople({
+          companyName,
+          website: job.company.website,
+          githubOrg: job.company.githubOrg,
+          token: this.githubToken,
+        }),
+      ]);
+      channels = discoveredChannels;
+      const { org, people } = gh;
+      rateLimited = gh.rateLimited;
       if (org && !job.company.githubOrg) {
         await this.prisma.company
           .update({ where: { id: job.company.id }, data: { githubOrg: org } })
@@ -151,7 +179,7 @@ export class ReferralsService {
       this.logger.warn(`Referral discovery failed for ${companyName}: ${String(err)}`);
     }
 
-    return this.result(jobId, job.title, companyName, contacts);
+    return this.result(jobId, job.title, companyName, contacts, channels, job.url, rateLimited);
   }
 
   /** Generate (or regenerate) the personalised outreach draft for one contact. */
@@ -248,6 +276,9 @@ export class ReferralsService {
     jobTitle: string,
     companyName: string,
     rows: ReferralContact[],
+    channels: CompanyChannels,
+    jobUrl: string | null,
+    rateLimited: boolean,
   ) {
     const dtos = rows.map((c) => this.toDto(c));
     const likes: ContactLike[] = dtos.map((c) => ({
@@ -262,7 +293,11 @@ export class ReferralsService {
       twitter: c.twitter,
       contributions: c.contributions,
     }));
-    const contacts = dtos.map((c, i) => ({ ...c, why: whyBullets(likes[i], companyName) }));
+    const contacts = dtos.map((c, i) => ({
+      ...c,
+      why: whyBullets(likes[i], companyName),
+      confidence: contactConfidence(likes[i]),
+    }));
     const strategy = buildStrategy(likes);
     const primaryPriority = likes.reduce((m, l) => Math.max(m, l.priority), 0);
     return {
@@ -272,10 +307,18 @@ export class ReferralsService {
       graph: companyGraph(likes),
       strategy,
       plan: buildPlan(strategy, { jobId, hasContacts: likes.length > 0, primaryPriority }),
-      message:
-        rows.length === 0
-          ? `No public GitHub presence found for ${companyName}. Try the company's careers page or an engineering-blog author — those are the other honest, public routes to a referral.`
-          : null,
+      // The never-dead-end ladder: people → company channels → apply anyway.
+      contactLadder: buildContactLadder(likes, channels, { companyName, jobUrl }),
+      channels: { emails: channels.emails },
+      // Honest, specific — never "no presence" when we were simply throttled, and
+      // never a dead end (the ladder below always has a next action).
+      searchedNote:
+        rows.length > 0
+          ? null
+          : rateLimited
+            ? `GitHub lookups are rate-limited right now, so engineers couldn't be fetched. Set a GITHUB_TOKEN to raise the limit. Use the ways in below meanwhile.`
+            : `CareerOS searched ${companyName}'s GitHub org, public contributors, and org repositories — no verified engineers found automatically. Use the ways in below.`,
+      message: null,
     };
   }
 

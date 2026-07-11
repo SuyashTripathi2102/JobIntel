@@ -43,6 +43,11 @@ export interface DiscoverOpts {
   maxPeople?: number;
 }
 
+/** Shared across a lookup so we can tell "no engineers" from "GitHub throttled us". */
+interface GhState {
+  rateLimited: boolean;
+}
+
 /** A hard cap on API calls so an anonymous lookup can't burn the 60/hr quota. */
 class Budget {
   private used = 0;
@@ -66,12 +71,26 @@ function headers(token?: string): Record<string, string> {
   };
 }
 
-/** GET returning parsed JSON, or null on any non-200 (rate limit, 404, …). */
-async function ghGet<T>(url: string, token: string | undefined, budget: Budget): Promise<T | null> {
+/** GET returning parsed JSON, or null on any non-200. Flags rate-limiting so the
+ *  caller never mistakes "GitHub throttled us" for "this company has no engineers". */
+async function ghGet<T>(
+  url: string,
+  token: string | undefined,
+  budget: Budget,
+  state: GhState,
+): Promise<T | null> {
   if (!budget.take()) return null;
   try {
     const res = await fetch(url, { headers: headers(token) });
-    if (!res.ok) return null;
+    if (!res.ok) {
+      if (
+        (res.status === 403 || res.status === 429) &&
+        res.headers.get('x-ratelimit-remaining') === '0'
+      ) {
+        state.rateLimited = true;
+      }
+      return null;
+    }
     return (await res.json()) as T;
   } catch {
     return null;
@@ -97,7 +116,12 @@ export function orgSlugCandidates(name: string): string[] {
     .trim();
   const words = base.split(' ').filter(Boolean);
   if (!words.length) return [];
-  return [...new Set([words.join(''), words.join('-'), words[0]])].filter((s) => s.length >= 2);
+  const joined = words.join('');
+  // Suffix variants catch the common "<name>labs / <name>hq" org convention
+  // (e.g. Postman → postmanlabs) without depending on the rate-limited search API.
+  return [
+    ...new Set([joined, words.join('-'), words[0], `${joined}labs`, `${joined}hq`]),
+  ].filter((s) => s.length >= 2);
 }
 
 /**
@@ -144,6 +168,7 @@ async function resolveOrg(
   opts: DiscoverOpts,
   token: string | undefined,
   budget: Budget,
+  state: GhState,
 ): Promise<string | null> {
   const tryOrg = async (slug: string): Promise<string | null> => {
     if (!slug || budget.empty) return null;
@@ -151,6 +176,7 @@ async function resolveOrg(
       `${GH}/orgs/${encodeURIComponent(slug)}`,
       token,
       budget,
+      state,
     );
     return o?.login ?? null;
   };
@@ -172,6 +198,7 @@ async function resolveOrg(
       `${GH}/search/users?q=${encodeURIComponent(opts.companyName)}+type:org&per_page=3`,
       token,
       budget,
+      state,
     );
     const item = res?.items?.find((i) => i.type === 'Organization');
     if (item) return item.login;
@@ -183,11 +210,13 @@ async function listPublicMembers(
   org: string,
   token: string | undefined,
   budget: Budget,
+  state: GhState,
 ): Promise<Set<string>> {
   const members = await ghGet<{ login: string }[]>(
     `${GH}/orgs/${org}/public_members?per_page=50`,
     token,
     budget,
+    state,
   );
   return new Set((members ?? []).map((m) => m.login).filter((l) => !isBot(l)));
 }
@@ -196,12 +225,14 @@ async function topContributors(
   org: string,
   token: string | undefined,
   budget: Budget,
+  state: GhState,
 ): Promise<Map<string, { contributions: number; repos: string[] }>> {
   const map = new Map<string, { contributions: number; repos: string[] }>();
   const repos = await ghGet<{ name: string; fork: boolean }[]>(
     `${GH}/orgs/${org}/repos?sort=pushed&per_page=8&type=sources`,
     token,
     budget,
+    state,
   );
   const active = (repos ?? []).filter((r) => !r.fork).slice(0, 4);
   for (const repo of active) {
@@ -210,6 +241,7 @@ async function topContributors(
       `${GH}/repos/${org}/${repo.name}/contributors?per_page=12`,
       token,
       budget,
+      state,
     );
     for (const c of contributors ?? []) {
       if (isBot(c.login)) continue;
@@ -241,21 +273,22 @@ function orderCandidates(
  */
 export async function discoverGithubPeople(
   opts: DiscoverOpts,
-): Promise<{ org: string | null; people: GitHubPerson[] }> {
+): Promise<{ org: string | null; people: GitHubPerson[]; rateLimited: boolean }> {
   const token = opts.token;
   const budget = new Budget(token ? 120 : 20);
-  const org = await resolveOrg(opts, token, budget);
-  if (!org) return { org: null, people: [] };
+  const state: GhState = { rateLimited: false };
+  const org = await resolveOrg(opts, token, budget, state);
+  if (!org) return { org: null, people: [], rateLimited: state.rateLimited };
 
-  const members = await listPublicMembers(org, token, budget);
-  const contributors = await topContributors(org, token, budget);
+  const members = await listPublicMembers(org, token, budget, state);
+  const contributors = await topContributors(org, token, budget, state);
   const cap = opts.maxPeople ?? (token ? 40 : 12);
   const candidates = orderCandidates(members, contributors, cap);
 
   const people: GitHubPerson[] = [];
   for (const login of candidates) {
     if (budget.empty) break;
-    const u = await ghGet<RawUser>(`${GH}/users/${login}`, token, budget);
+    const u = await ghGet<RawUser>(`${GH}/users/${login}`, token, budget, state);
     if (!u) continue;
     const publicMember = members.has(login);
     // Keep only confirmed employees: public org members, or contributors who
@@ -278,5 +311,5 @@ export async function discoverGithubPeople(
       viaRepos: contrib?.repos ?? [],
     });
   }
-  return { org, people };
+  return { org, people, rateLimited: state.rateLimited };
 }

@@ -1,10 +1,13 @@
 import {
+  buildContactLadder,
   buildPlan,
   buildStrategy,
   companyGraph,
+  contactConfidence,
   whyBullets,
   type ContactLike,
 } from './outreach-strategy';
+import type { CompanyChannels } from './company-contacts';
 
 const c = (over: Partial<ContactLike>): ContactLike => ({
   id: 'x',
@@ -83,5 +86,56 @@ describe('buildPlan', () => {
     expect(plan.some((p) => /Tailor your resume/.test(p.title))).toBe(true);
     expect(plan.some((p) => /Apply on the company site/.test(p.title))).toBe(true);
     expect(plan.every((p) => !/referral/i.test(p.title))).toBe(true);
+  });
+});
+
+describe('contactConfidence', () => {
+  it('rates a recruiter max on referral and an emailable engineer high on response', () => {
+    expect(contactConfidence(c({ role: 'RECRUITER', publicMember: true })).referral).toBe(5);
+    const eng = contactConfidence(
+      c({ role: 'ENGINEER', publicMember: true, email: 'a@b.dev', sharedTech: ['Node.js'], contributions: 40 }),
+    );
+    expect(eng.response).toBe(5);
+    expect(eng.referral).toBe(4);
+  });
+
+  it('rates an unreachable outside contributor low on both', () => {
+    const x = contactConfidence(c({ role: 'ENGINEER', publicMember: false, email: null }));
+    expect(x.referral).toBe(2);
+    expect(x.response).toBe(2);
+  });
+});
+
+const emptyChannels: CompanyChannels = { emails: [], careerPageUrl: null, contactPageUrl: null };
+
+describe('buildContactLadder', () => {
+  it('leads with a person and always ends in "apply anyway"', () => {
+    const ladder = buildContactLadder(
+      [c({ id: 'p', role: 'ENGINEER', priority: 80 })],
+      { ...emptyChannels, careerPageUrl: 'https://acme.com/careers' },
+      { companyName: 'Acme', jobUrl: 'https://acme.com/job/1' },
+    );
+    expect(ladder[0].kind).toBe('REFERRAL');
+    expect(ladder[0].action).toEqual({ type: 'anchor', value: 'contact-p' });
+    expect(ladder.some((r) => r.kind === 'CAREERS_PAGE')).toBe(true);
+    expect(ladder[ladder.length - 1].kind).toBe('APPLY');
+  });
+
+  it('never dead-ends: with no people it falls through to a recruiting email then apply', () => {
+    const ladder = buildContactLadder(
+      [],
+      { emails: [{ address: 'careers@acme.com', kind: 'RECRUITING' }], careerPageUrl: null, contactPageUrl: null },
+      { companyName: 'Acme', jobUrl: 'https://acme.com/job/1' },
+    );
+    expect(ladder.some((r) => r.kind === 'COMPANY_EMAIL' && r.action?.value === 'careers@acme.com')).toBe(true);
+    expect(ladder[ladder.length - 1].kind).toBe('APPLY');
+    expect(ladder.every((r) => r.kind !== 'REFERRAL')).toBe(true);
+  });
+
+  it('always offers apply-anyway even with nothing at all', () => {
+    const ladder = buildContactLadder([], emptyChannels, { companyName: 'Acme', jobUrl: null });
+    expect(ladder).toHaveLength(1);
+    expect(ladder[0].kind).toBe('APPLY');
+    expect(ladder[0].action).toBeNull();
   });
 });
