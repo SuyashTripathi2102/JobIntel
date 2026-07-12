@@ -121,6 +121,27 @@ describe('buildContactLadder', () => {
     expect(ladder[ladder.length - 1].kind).toBe('APPLY');
   });
 
+  it('adds an engineering-blog-authors rung above cold emails (beyond GitHub)', () => {
+    const ladder = buildContactLadder(
+      [],
+      {
+        emails: [{ address: 'careers@acme.com', kind: 'RECRUITING' }],
+        careerPageUrl: null,
+        contactPageUrl: null,
+        blogUrl: 'https://acme.com/engineering',
+        blogAuthors: ['Asha Rao', 'Bryan Cross'],
+      },
+      { companyName: 'Acme', jobUrl: null },
+    );
+    const kinds = ladder.map((r) => r.kind);
+    expect(kinds).toContain('ENG_BLOG');
+    // beyond-GitHub named people rank above the generic recruiting email
+    expect(kinds.indexOf('ENG_BLOG')).toBeLessThan(kinds.indexOf('COMPANY_EMAIL'));
+    const blog = ladder.find((r) => r.kind === 'ENG_BLOG')!;
+    expect(blog.label).toContain('Asha Rao');
+    expect(blog.action).toEqual({ type: 'link', value: 'https://acme.com/engineering' });
+  });
+
   it('never dead-ends: with no people it falls through to a recruiting email then apply', () => {
     const ladder = buildContactLadder(
       [],

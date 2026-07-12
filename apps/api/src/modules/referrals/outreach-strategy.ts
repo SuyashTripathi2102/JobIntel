@@ -143,6 +143,7 @@ export type LadderKind =
   | 'REFERRAL'
   | 'RECRUITER'
   | 'HIRING_MANAGER'
+  | 'ENG_BLOG'
   | 'COMPANY_EMAIL'
   | 'CAREERS_PAGE'
   | 'CONTACT_PAGE'
@@ -206,6 +207,19 @@ export function buildContactLadder(
       detail: 'A concise, respectful note to someone who owns the req.',
       action: { type: 'anchor', value: `contact-${manager.id}` },
       confidence: contactConfidence(manager).referral,
+    });
+  }
+
+  // Named public engineers who write for the company — a genuine "beyond GitHub"
+  // rung: read their work, engage, then reach out. Sits above cold emails.
+  const authors = channels.blogAuthors ?? [];
+  if (authors.length && channels.blogUrl) {
+    rungs.push({
+      kind: 'ENG_BLOG',
+      label: `Engineering blog authors: ${authors.slice(0, 3).join(', ')}${authors.length > 3 ? ' +more' : ''}`,
+      detail: 'Public engineers who write for the company — read a post, engage genuinely, then reach out.',
+      action: { type: 'link', value: channels.blogUrl },
+      confidence: 3,
     });
   }
 

@@ -225,6 +225,7 @@ const LADDER_ICON: Record<string, string> = {
   REFERRAL: '🤝',
   RECRUITER: '🧭',
   HIRING_MANAGER: '👤',
+  ENG_BLOG: '📝',
   COMPANY_EMAIL: '✉️',
   CAREERS_PAGE: '🌐',
   CONTACT_PAGE: '📨',

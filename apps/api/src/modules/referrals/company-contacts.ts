@@ -20,6 +20,13 @@ export interface CompanyChannels {
   emails: CompanyEmail[];
   careerPageUrl: string | null;
   contactPageUrl: string | null;
+  // Engineering-blog authors (a "beyond GitHub" people source). Optional so
+  // older callers/records stay valid.
+  blogUrl?: string | null;
+  blogAuthors?: string[];
+  // ISO timestamp of the last probe — company-level channels are cached ~14d
+  // independently of the per-user people cache.
+  probedAt?: string;
 }
 
 const RECRUITING_LOCAL =

@@ -329,6 +329,10 @@ model Company {
   linkedinUrl        String?
   githubOrg          String?
   engineeringBlogUrl String?
+  // Cached public contact channels for the referral "Ways in" ladder:
+  // { emails, contactPageUrl, blogUrl, blogAuthors, probedAt }. Company-level,
+  // refreshed ~14d, so the ladder stays rich across loads (not just first find).
+  contactChannels    Json?
   description        String?
   createdAt     DateTime     @default(now())
   updatedAt     DateTime     @updatedAt

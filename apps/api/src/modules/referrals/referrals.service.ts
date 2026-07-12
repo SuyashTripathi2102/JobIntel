@@ -6,7 +6,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import type { ReferralContact } from '@prisma/client';
+import { Prisma, type ReferralContact } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { LLM_PROVIDER } from '../ai/llm.provider';
 import type { LlmProvider } from '../ai/llm.provider';
@@ -24,6 +24,7 @@ import {
   type ContactLike,
 } from './outreach-strategy';
 import { discoverCompanyChannels, type CompanyChannels } from './company-contacts';
+import { discoverBlogAuthors } from './blog-authors';
 import { followUpPrompt, nextOutreachAction } from './referral-followup';
 
 /** How long a company's discovered shortlist stays fresh before we re-crawl. */
@@ -62,12 +63,25 @@ export class ReferralsService {
         title: true,
         url: true,
         company: {
-          select: { id: true, name: true, website: true, githubOrg: true, careerPageUrl: true },
+          select: {
+            id: true,
+            name: true,
+            website: true,
+            githubOrg: true,
+            careerPageUrl: true,
+            engineeringBlogUrl: true,
+            contactChannels: true,
+          },
         },
       },
     });
     if (!job) throw new NotFoundException('Job not found');
     const companyName = job.company.name;
+
+    // Company-level public channels (recruiting emails + eng-blog authors),
+    // cached ~14d ON THE COMPANY so the ladder stays rich on every load — not
+    // only right after a fresh people discovery.
+    const channels = await this.ensureChannels(job.company);
 
     const cached = await this.prisma.referralContact.findMany({
       where: { userId, companyName },
@@ -75,39 +89,20 @@ export class ReferralsService {
     });
     const freshest = cached.reduce<number>((m, c) => Math.max(m, c.createdAt.getTime()), 0);
     if (cached.length > 0 && Date.now() - freshest < FRESH_MS) {
-      // People are cached; skip the site fetch and lead the ladder with them.
-      const channels: CompanyChannels = {
-        emails: [],
-        careerPageUrl: job.company.careerPageUrl,
-        contactPageUrl: null,
-      };
       return this.result(jobId, job.title, companyName, cached, channels, job.url, false);
     }
 
-    // Re-discover. Failures degrade to "no source" rather than erroring the page.
+    // Re-discover people. Failures degrade to the channel ladder, never an error.
     let contacts = cached;
     let rateLimited = false;
-    let channels: CompanyChannels = {
-      emails: [],
-      careerPageUrl: job.company.careerPageUrl,
-      contactPageUrl: null,
-    };
     try {
       const userSkills = await this.userSkills(userId);
-      // Company channels + GitHub people in parallel — both are ways in.
-      const [discoveredChannels, gh] = await Promise.all([
-        discoverCompanyChannels({
-          website: job.company.website,
-          careerPageUrl: job.company.careerPageUrl,
-        }).catch(() => channels),
-        discoverGithubPeople({
-          companyName,
-          website: job.company.website,
-          githubOrg: job.company.githubOrg,
-          token: this.githubToken,
-        }),
-      ]);
-      channels = discoveredChannels;
+      const gh = await discoverGithubPeople({
+        companyName,
+        website: job.company.website,
+        githubOrg: job.company.githubOrg,
+        token: this.githubToken,
+      });
       const { org, people } = gh;
       rateLimited = gh.rateLimited;
       if (org && !job.company.githubOrg) {
@@ -339,6 +334,63 @@ export class ReferralsService {
   }
 
   // ── internals ──
+
+  /**
+   * Public contact channels for a company (recruiting emails + eng-blog authors),
+   * cached ~14d on the company row so the "Ways in" ladder is consistently rich —
+   * independent of the per-user people cache. Best-effort: a probe failure just
+   * yields the careers-page rung.
+   */
+  private async ensureChannels(company: {
+    id: string;
+    website: string | null;
+    careerPageUrl: string | null;
+    engineeringBlogUrl: string | null;
+    contactChannels: Prisma.JsonValue;
+  }): Promise<CompanyChannels> {
+    const stored = (company.contactChannels ?? null) as CompanyChannels | null;
+    const fresh = stored?.probedAt && Date.now() - Date.parse(stored.probedAt) < FRESH_MS;
+    if (fresh && stored) {
+      return { ...stored, careerPageUrl: company.careerPageUrl ?? stored.careerPageUrl ?? null };
+    }
+
+    let channels: CompanyChannels = {
+      emails: [],
+      careerPageUrl: company.careerPageUrl,
+      contactPageUrl: null,
+      blogUrl: null,
+      blogAuthors: [],
+    };
+    try {
+      const [ch, blog] = await Promise.all([
+        discoverCompanyChannels({
+          website: company.website,
+          careerPageUrl: company.careerPageUrl,
+        }).catch(() => null),
+        discoverBlogAuthors({
+          engineeringBlogUrl: company.engineeringBlogUrl,
+          website: company.website,
+        }).catch(() => null),
+      ]);
+      channels = {
+        emails: ch?.emails ?? [],
+        careerPageUrl: company.careerPageUrl,
+        contactPageUrl: ch?.contactPageUrl ?? null,
+        blogUrl: blog?.blogUrl ?? null,
+        blogAuthors: blog?.authors ?? [],
+        probedAt: new Date().toISOString(),
+      };
+      await this.prisma.company
+        .update({
+          where: { id: company.id },
+          data: { contactChannels: channels as unknown as Prisma.InputJsonValue },
+        })
+        .catch(() => undefined);
+    } catch (err) {
+      this.logger.warn(`Channel probe failed for company ${company.id}: ${String(err)}`);
+    }
+    return channels;
+  }
 
   private result(
     jobId: string,
